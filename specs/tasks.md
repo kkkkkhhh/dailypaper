@@ -29,6 +29,7 @@
 | 13 | Task 9 | 新增节假日判定、环境变量检查、聚合调用方式 | design.md §4.4、§6.2、§6.5、§6.6 |
 | 14 | Task 9 | 新增 SQLite 写入验收 | design.md §4.4、ADR-002 |
 | 15 | 全文 | 新增时区约定 | design.md §6.5 |
+| 16 | Task 2 | 新增 `shared/models.py` 作为数据模型的唯一定义处（原规范定义了数据模型但未指定归属文件） | design.md §2、§3 |
 
 ## 任务依赖图（DAG）
 
@@ -83,7 +84,7 @@ Task 10 (集成测试)
       `collector/`（github.py、lark_task.py、lark_msg.py）、
       `generator/`（aggregator.py、formatter.py、template.py）、
       `notifier/`（email.py、lark_bot.py、alert.py）、
-      `shared/`（config.py、logger.py、errors.py、storage.py、calendar.py）、
+      `shared/`（models.py、config.py、logger.py、errors.py、storage.py、calendar.py）、
       `tests/`
 - [ ] `pyproject.toml` 包含 httpx、pyyaml、jinja2 依赖
 - [ ] `uv sync` 成功安装所有依赖
@@ -93,13 +94,15 @@ Task 10 (集成测试)
 
 ## Task 2: 实现共享基础层
 
-**描述**：实现配置读取、日志记录、错误处理、SQLite 存储和工作日判定 5 个共享模块
+**描述**：实现数据模型、配置读取、日志记录、错误处理、SQLite 存储和工作日判定 6 个共享模块
 
-**输入**：`config.yaml.example`（配置格式）、design.md §4.4（共享层接口契约）、design.md §6（非功能约束）
-**输出**：`shared/config.py`、`shared/logger.py`、`shared/errors.py`、`shared/storage.py`、`shared/calendar.py`
+**输入**：`config.yaml.example`（配置格式）、design.md §3（数据模型）、design.md §4.4（共享层接口契约）、design.md §6（非功能约束）
+**输出**：`shared/models.py`、`shared/config.py`、`shared/logger.py`、`shared/errors.py`、`shared/storage.py`、`shared/calendar.py`
 **依赖**：Task 1
 
 **验收标准**
+- [ ] `models.py` 定义 design.md §3 的全部数据模型：`CommitRecord`(7 字段)、`TaskRecord`(5 字段)、`MessageRecord`(4 字段)、`CollectResult[T]`(5 字段)、`MemberReport`(5 字段)、`DailyReport`(7 字段)、`MemberConfig`
+- [ ] 各模型字段名、类型、顺序与 design.md §3 的表一致
 - [ ] `config.py` 能读取 `config.yaml` 并返回配置对象
 - [ ] `config.py` 在配置缺少必填字段时抛出 `ConfigError`，且**错误信息包含缺失的字段名**
 - [ ] `logger.py` 输出 JSON lines 格式日志

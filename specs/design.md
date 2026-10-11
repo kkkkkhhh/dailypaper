@@ -59,7 +59,7 @@
 | `collector/` | `github.py`<br>`lark_task.py`<br>`lark_msg.py` | 从外部 API 获取原始数据：<br>· GitHub Commit 数据<br>· 飞书任务状态数据<br>· 飞书群消息数据 | · 不做数据格式化<br>· 不去重判断<br>· 不做推送<br>· **不做跨源聚合** |
 | `generator/` | `aggregator.py`<br>`formatter.py`<br>`template.py` | 把原始数据组织为日报：<br>· **按成员映射聚合跨源记录**<br>· 数据整理<br>· Markdown 生成<br>· 日报模板管理 | · 不做数据采集<br>· 不调 API<br>· 不做推送 |
 | `notifier/` | `email.py`<br>`lark_bot.py`<br>`alert.py` | 将日报推送给目标：<br>· SMTP 邮件发送<br>· 飞书机器人消息推送<br>· **异常告警投递** | · 不做数据处理<br>· 不做日报生成<br>· 不做数据采集 |
-| `shared/` | `config.py`<br>`logger.py`<br>`errors.py`<br>`storage.py`<br>`calendar.py` | 跨模块共享能力：<br>· 配置读取和校验<br>· 统一日志格式<br>· 自定义异常 + 错误处理策略<br>· SQLite 存储（日报历史）<br>· **工作日/节假日判定** | — |
+| `shared/` | `models.py`<br>`config.py`<br>`logger.py`<br>`errors.py`<br>`storage.py`<br>`calendar.py` | 跨模块共享能力：<br>· **数据模型定义**（跨模块共享的 Record / CollectResult / Report 类型）<br>· 配置读取和校验<br>· 统一日志格式<br>· 自定义异常 + 错误处理策略<br>· SQLite 存储（日报历史）<br>· **工作日/节假日判定** | — |
 | （入口） | `main.py` | 编排入口：按顺序调用各层，处理全局异常，记录执行状态 | · **不含业务逻辑**（聚合属生成层，见 §4.5）<br>· 不直接调用外部 API |
 
 > **`main.py` 边界的澄清**：编排层只做「按顺序调用 + 异常兜底 + 执行状态记录」，不承担任何数据变换。§3.4 的成员聚合规则因而**不属于** `main.py`，而是由 `generator/aggregator.py` 承接（§4.5）。
@@ -67,6 +67,8 @@
 ## 3. 数据模型
 
 **定义原则**：只承载语义，不绑定实现。以下明确「一条记录应包含哪些字段」，但未规定「用 dataclass 还是 Pydantic 表示」——后者属实现细节，留给实现方裁量。
+
+**归属**：全部数据模型定义在 `shared/models.py`。采集层、生成层、推送层与存储层共用同一份定义 —— 若各模块自行定义，并行开发时必然出现类型不匹配（§5.4.1 所述「模块间说着不同语言」）。
 
 ### 3.1 采集记录
 
@@ -252,6 +254,12 @@ def send(
 ### 4.4 共享层接口
 
 ```python
+# shared/models.py
+# 全部数据模型的唯一定义处（§3），供各模块共用：
+# CommitRecord / TaskRecord / MessageRecord
+# CollectResult[T] / MemberReport / DailyReport
+# 以及 MemberConfig（身份映射项，见 §3.4）
+
 # shared/config.py
 def load(path: str = "config.yaml") -> Config: ...
 # 缺少必填字段时抛 ConfigError，错误信息须指明缺失的字段名
