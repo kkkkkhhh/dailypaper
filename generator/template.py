@@ -25,6 +25,20 @@ MARKDOWN_TEMPLATE = """\
 
 {% if section.failed %}
 > ⚠️ {{ section.source_label }} 数据获取失败{% if section.failed_detail %}（{{ section.failed_detail }}）{% endif %}
+{% if section.has_records %}
+
+以下为**已成功采集到的部分**（数据不完整）：
+{% for member in section.members if member.records %}
+### {{ member.name }}
+
+{% for r in member.records %}
+{% if section.kind == 'commits' %}- `{{ r.repo }}` {{ r.message }}（+{{ r.additions }} 行 / -{{ r.deletions }} 行，{{ r.files_changed }} 个文件）
+{% elif section.kind == 'tasks' %}- {{ r.title }}：{{ r.status_from }} → {{ r.status_to }}（{{ r.updated_at | hhmm }}）
+{% elif section.kind == 'messages' %}- [{{ r.timestamp | hhmm }}] {{ r.content }}
+{% endif %}
+{% endfor %}
+{% endfor %}
+{% endif %}
 {% else %}
 {% for member in section.members %}
 ### {{ member.name }}
@@ -75,6 +89,23 @@ HTML_TEMPLATE = """\
 <h2>{{ section.title }}</h2>
 {% if section.failed %}
 <p class="failed">⚠️ {{ section.source_label }} 数据获取失败{% if section.failed_detail %}（{{ section.failed_detail }}）{% endif %}</p>
+{% if section.has_records %}
+<p class="meta">以下为<strong>已成功采集到的部分</strong>（数据不完整）：</p>
+{% for member in section.members if member.records %}
+<h3>{{ member.name }}</h3>
+<ul>
+{% for r in member.records %}
+{% if section.kind == 'commits' %}
+  <li><code>{{ r.repo }}</code> {{ r.message }}（+{{ r.additions }} 行 / -{{ r.deletions }} 行，{{ r.files_changed }} 个文件）</li>
+{% elif section.kind == 'tasks' %}
+  <li>{{ r.title }}：{{ r.status_from }} → {{ r.status_to }}（{{ r.updated_at | hhmm }}）</li>
+{% elif section.kind == 'messages' %}
+  <li>[{{ r.timestamp | hhmm }}] {{ r.content }}</li>
+{% endif %}
+{% endfor %}
+</ul>
+{% endfor %}
+{% endif %}
 {% else %}
 {% for member in section.members %}
 <h3>{{ member.name }}</h3>

@@ -89,6 +89,10 @@ logger = get_logger("notifier.lark_bot")
 _MESSAGES_PATH = "/open-apis/im/v1/messages"
 _RECEIVE_ID_TYPE = "chat_id"
 
+#: 机器人自身信息。`check()` 用它做健康检查 —— 能查通就说明应用凭证有效、
+#: 能换到令牌、且机器人能力已开启，且不会往群里发任何东西。
+_BOT_INFO_PATH = "/open-apis/bot/v3/info"
+
 #: 触发频率限制。走的是业务错误码，但语义上**可恢复** —— 等待后重试大概率成功，
 #: 与「机器人不在群」「权限不足」这类重试也没用的错误性质不同（design.md §6.1 的例外条目）。
 _RETRYABLE_BUSINESS_CODES = frozenset({230020})
@@ -226,6 +230,43 @@ def _log_retry(
             }
         },
     )
+
+
+def check(config: Any = None) -> tuple[bool, str]:
+    """验证飞书机器人是否可用：换取令牌 → 查询机器人自身信息，**不发消息**。
+
+    供 `main.py --check` 使用（design.md §6.3）。刻意不发送任何消息 ——
+    健康检查不该往团队群里刷测试消息。
+
+    查 `bot/v3/info` 而非直接发消息，同时验证了三件事：应用凭证有效、
+    能换到令牌、应用确实开启了机器人能力。**机器人是否在目标群**则无法
+    由此判断（那需要真的往群里发），这类失败会在首次推送时以 230002 暴露。
+
+    Returns:
+        (是否通过, 人类可读的说明)。**不抛异常**。
+    """
+    if config is None:
+        try:
+            config = load_config()
+        except Exception as exc:  # noqa: BLE001
+            return False, f"配置读取失败：{type(exc).__name__}: {exc}"
+
+    if not config.lark.chat_id:
+        return False, "未配置目标群（lark.chat_id）"
+
+    try:
+        client = _get_client()
+        payload = client.get(_BOT_INFO_PATH)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"换取令牌或请求失败：{type(exc).__name__}: {exc}"
+
+    code, msg = _code_and_msg(payload)
+    if code != 0:
+        return False, f"飞书返回错误：code={code} msg={msg}"
+
+    bot = payload.get("bot") or {}
+    name = bot.get("app_name") or bot.get("name") or "（未返回名称）"
+    return True, f"应用「{name}」凭证与机器人能力正常，目标群 {config.lark.chat_id}"
 
 
 # --------------------------------------------------------------------------

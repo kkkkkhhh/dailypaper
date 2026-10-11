@@ -172,6 +172,47 @@ def _build_message(
     return message
 
 
+def check(config: SmtpConfig | None = None) -> tuple[bool, str]:
+    """验证 SMTP 是否可用：连接 → STARTTLS（如适用）→ 登录，**不发信**。
+
+    供 `main.py --check` 使用（design.md §6.3）。刻意不发送任何邮件 ——
+    健康检查不该在收件人的收件箱里留下痕迹，也不该消耗发信配额。
+
+    Args:
+        config: SMTP 配置，仅测试注入用；生产从 config.yaml 读取。
+
+    Returns:
+        (是否通过, 人类可读的说明)。**不抛异常** —— 检查失败本身就是要报告的结果。
+    """
+    if config is None:
+        try:
+            config = load().smtp
+        except Exception as exc:  # noqa: BLE001
+            return False, f"配置读取失败：{type(exc).__name__}: {exc}"
+
+    if not config.recipients:
+        return False, "未配置收件人（smtp.recipients）"
+
+    client: smtplib.SMTP | None = None
+    try:
+        if config.port == _SSL_PORT:
+            client = smtplib.SMTP_SSL(config.host, config.port, timeout=_TIMEOUT_SECONDS)
+        else:
+            client = smtplib.SMTP(config.host, config.port, timeout=_TIMEOUT_SECONDS)
+            client.starttls()
+        client.login(config.sender, config.password)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"连接或登录失败：{type(exc).__name__}: {exc}"
+    finally:
+        if client is not None:
+            _close_quietly(client)
+
+    return (
+        True,
+        f"{config.host}:{config.port} 连接与登录正常，收件人 {len(config.recipients)} 个",
+    )
+
+
 def _transmit(config: SmtpConfig, message: EmailMessage) -> None:
     """单次投递；失败以异常形式抛给 _send_with_retry，由它统一记录并重试。"""
     if config.port == _SSL_PORT:

@@ -248,8 +248,11 @@ def test_failed_source_shows_fetch_failure_not_no_records():
     assert "GitHub 数据获取失败" in with_failure.markdown
 
 
-def test_failed_source_replaces_section_body():
-    """采集失败时该板块不渲染逐成员内容 —— 我们并不知道成员有没有记录。"""
+def test_failed_source_never_falls_back_to_no_records():
+    """失败板块绝不显示「今日无记录」—— 我们并不知道成员当天有没有记录。
+
+    把这句写上去，等于用「没干活」掩盖了「采集失败」。
+    """
     commits, tasks, messages = results(commits=[commit("zhangsan")])
     report = generate(
         aggregate(commits, tasks, messages, MEMBERS), ["github"], REPORT_DATE, "研发一组"
@@ -257,6 +260,41 @@ def test_failed_source_replaces_section_body():
 
     section = report.markdown.split("## 代码提交")[1].split("## 任务进展")[0]
     assert "数据获取失败" in section
+    assert "今日无记录" not in section
+
+
+def test_partial_failure_still_shows_the_data_we_did_collect():
+    """部分失败时，已采到的数据必须照常展示。
+
+    否则一个坏仓库会连带把其他仓库采到的内容从日报上整个抹掉 ——
+    「部分失败不退化」这句话就只剩字面意义。
+    """
+    commits, tasks, messages = results(commits=[commit("zhangsan", message="feat: 有数据")])
+    report = generate(
+        aggregate(commits, tasks, messages, MEMBERS),
+        ["github"],
+        REPORT_DATE,
+        "研发一组",
+        failed_details={"github": ["owner/repoB"]},
+    )
+
+    section = report.markdown.split("## 代码提交")[1].split("## 任务进展")[0]
+    assert "数据获取失败" in section
+    assert "owner/repoB" in section
+    assert "feat: 有数据" in section
+    assert "数据不完整" in section
+
+
+def test_whole_source_failure_without_data_renders_notice_only():
+    """整源失败且一条都没采到 —— 只出告示，不列成员。"""
+    commits, tasks, messages = results()
+    report = generate(
+        aggregate(commits, tasks, messages, MEMBERS), ["github"], REPORT_DATE, "研发一组"
+    )
+
+    section = report.markdown.split("## 代码提交")[1].split("## 任务进展")[0]
+    assert "数据获取失败" in section
+    assert "张三" not in section
     assert "今日无记录" not in section
 
 

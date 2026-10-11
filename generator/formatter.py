@@ -95,6 +95,10 @@ def build_context(
 
     sections: list[dict[str, Any]] = []
     for title, source, attribute, label in _SECTIONS:
+        member_views = [
+            {"name": member.name, "records": list(getattr(member, attribute))}
+            for member in members
+        ]
         sections.append(
             {
                 "title": title,
@@ -102,10 +106,10 @@ def build_context(
                 "source_label": label,
                 "failed": source in failed,
                 "failed_detail": "、".join(details.get(source, [])),
-                "members": [
-                    {"name": member.name, "records": list(getattr(member, attribute))}
-                    for member in members
-                ],
+                # 失败板块若仍有记录，说明是**部分失败** —— 这些数据照样要展示，
+                # 否则一个坏仓库会连带把其他仓库采到的内容从日报上抹掉
+                "has_records": any(view["records"] for view in member_views),
+                "members": member_views,
             }
         )
 
