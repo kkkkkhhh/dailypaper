@@ -37,7 +37,11 @@
 
 由 `main.py` 编排，每层只认识相邻层的接口。
 
-> **失败信息的传递路径**（关键）：采集失败的信息必须**逐层透传**到生成层，否则日报无法标注「数据获取失败」。传递链为 `CollectResult.failed / success → aggregate() 透传 → generate(failed_sources=...) → 日报正文标注`。这条链上任何一环断开，proposal.md §3.2 的验收标准都无法实现。
+> **失败信息的传递路径**（关键）：采集失败的信息必须**透传**到生成层，否则日报无法标注「数据获取失败」。传递链为：
+>
+> `CollectResult.failed / success` → `main.py 提取` → `generate(failed_sources=..., failed_details=...)` → 日报正文标注
+>
+> **注意 `aggregate()` 不在这条链上** —— 它只返回 `list[MemberReport]`，失败信息由编排层绕过它直接透传给 `generate()`（§4.5）。这条链上任何一环断开，proposal.md §3.2 的验收标准都无法实现。
 
 ### 1.2 为什么不选其他架构
 
@@ -86,7 +90,7 @@
 
 | TaskRecord（任务变更记录） | 类型 | 说明 |
 |---|---|---|
-| `assignee` | str | 负责人（飞书用户名） |
+| `assignee` | str | 负责人（**飞书标识**：open_id） |
 | `title` | str | 任务标题 |
 | `status_from` | str | 原状态 |
 | `status_to` | str | 新状态 |
@@ -96,12 +100,14 @@
 
 | MessageRecord（消息记录） | 类型 | 说明 |
 |---|---|---|
-| `sender` | str | 发送者（飞书用户名） |
+| `sender` | str | 发送者（**飞书标识**：open_id） |
 | `content` | str | 消息内容（纯文本） |
 | `timestamp` | datetime | 发送时间（tz-aware） |
 | `chat_name` | str | 群名称 |
 
 **共 4 个字段。**
+
+> **`assignee` / `sender` 为什么是 open_id 而不是显示名**：书中图 5-6 标注为「飞书用户名」，但真实 API 返回的是 `open_id`，而 §3.4 的身份映射表里只有 `lark_open_id` 与邮箱两种取值，**没有显示名**。若采集层填显示名，§3.4 的聚合将一条都匹配不上 —— 飞书两个数据源会被整批静默丢弃。故此处以 API 实际返回的 `open_id` 为准。这是书在真实 API 对接上的第三处真空（前两处见 §3.4、ADR-004）。
 
 ### 3.2 采集结果封装（ADR-003 引入，ADR-004 扩展）
 
@@ -131,6 +137,15 @@ CollectResult[T]:
 
 **日报如何呈现**：`failed` 为空即不标注；非空时在对应板块标注「`<数据源>` 数据获取失败（`<failed 明细>`）」。因此**部分失败不会退化成整个板块不可用**。
 
+**明细如何送达生成层**（ADR-004 补全）：`CollectResult.failed` 只存在于采集层，而 `generate()` 属于生成层、不依赖采集层类型。中间的转换由编排层完成，**两个入参各司其职**：
+
+| 入参 | 来源 | 作用 |
+|------|------|------|
+| `failed_sources` | `CollectResult.source`（`success=False` 的那些） | 决定**哪些板块**显示失败标注 |
+| `failed_details` | `CollectResult.failed` | 决定标注括号里的**子项明细**（如 `owner/repoB`） |
+
+整源失败（`failed` 为空但 `success=False`）时，明细位置改用 `CollectResult.error` 的摘要。
+
 ### 3.3 日报模型
 
 | MemberReport（成员报告） | 类型 | 说明 |
@@ -146,12 +161,17 @@ CollectResult[T]:
 | `date` | date | 日报日期 |
 | `team_name` | str | 团队名称 |
 | `members` | list[MemberReport] | 各成员的日报段落 |
-| `failed_sources` | list[str] | 本次采集失败的数据源标识；用于正文标注 |
+| `failed_sources` | list[str] | 本次采集失败的数据源标识；决定哪些板块显示失败标注 |
+| `failed_details` | dict[str, list[str]] | 数据源 → 失败子项明细；整源失败时值为该源的 `error` 摘要 |
 | `generated_at` | datetime | 生成时间（tz-aware） |
 | `markdown` | str | 完整的 Markdown 格式日报 |
 | `html` | str | 完整的 HTML 格式日报 |
 
-> `DailyReport.failed_sources` 是 ADR-004 新增字段，承载 §1.1 所述失败信息传递链的终点。
+**共 8 个字段。**
+
+> `failed_sources` 与 `failed_details` 是 ADR-004 新增字段，共同承载 §1.1 所述失败信息传递链的终点：前者决定**哪些板块**显示标注，后者决定标注括号里的**子项明细**。
+>
+> 为什么明细分立：`markdown` / `html` 里虽然已渲染出明细，但**报告对象本身无法被程序化断言** —— Task 10 就只能靠字符串匹配去验「标注了失败子项」，脆弱且会在模板改动后误报。
 
 ### 3.4 跨系统身份映射
 
@@ -191,6 +211,12 @@ members:
 
 ### 4.1 采集层接口
 
+**客户端与配置的注入方式**：`collect()` 的签名只描述「采集什么」（仓库、群、时间窗）。
+令牌、`filters.sensitive_keywords`、`lark.bot_open_id` 这些**运行环境**不进签名，由实现从
+`shared.config.load()` 读取；同时允许以**仅关键字参数**注入（`client=` / `config=`）供测试
+用 MockTransport 替换客户端。这样规范调用形式 `collect(repos, since, until)` 保持不变，
+而测试不必打真实网络。
+
 ```python
 # collector/lark_client.py —— 飞书开放平台客户端（两个飞书采集模块共用）
 class LarkClient:
@@ -212,6 +238,8 @@ def collect(
     until: datetime,           # 结束时间（tz-aware）
 ) -> CollectResult[CommitRecord]: ...
 # 每个仓库独立采集；单个仓库失败不影响其他仓库（见 §3.2 语义表）
+# 凭证取自 config.github.token（来源为环境变量 GITHUB_TOKEN，见 §6.2），
+# 该值不出现在签名中 —— 签名描述的是「采集什么」，凭证是运行环境而非调用参数。
 
 # collector/lark_task.py
 def collect(
@@ -219,7 +247,15 @@ def collect(
     since: datetime,           # 起始时间（tz-aware）
     until: datetime,           # 结束时间（tz-aware）
 ) -> CollectResult[TaskRecord]: ...
-# project_id 为空字符串时表示「不限定清单，采集全部任务」
+
+# 窗口过滤依据：飞书任务接口只暴露 completed_at 作为与状态相关的时刻，
+# 且不提供任何「按变更时间查询」的参数，故实现为「completed_at 落在窗口内」。
+#
+# project_id 为空字符串时表示「不限定清单」。注意飞书的「全部任务」接口
+# （GET /open-apis/task/v2/tasks）要求 user_access_token，而本应用只有
+# tenant_access_token，故该分支实现为**枚举全部可读清单再逐个采集**。
+# 清单即失败子项粒度，与 §3.2 的多仓库部分失败同一模型。
+# 已知覆盖边界：不属于任何清单的任务中心任务不在采集范围内。
 
 # collector/lark_msg.py
 def collect(
@@ -228,6 +264,9 @@ def collect(
     since: datetime,           # 起始时间（tz-aware）
     until: datetime,           # 结束时间（tz-aware）
 ) -> CollectResult[MessageRecord]: ...
+# 附加调用：群名称（MessageRecord.chat_name）需另调 GET /open-apis/im/v1/chats/{chat_id}，
+#   该接口要求 im:chat:readonly 权限。取不到时回退为 chat_id —— 群名只影响可读性，
+#   不应因它失败而中断消息采集。
 ```
 
 ### 4.2 生成层接口
@@ -235,14 +274,15 @@ def collect(
 ```python
 # generator/formatter.py
 def generate(
-    members: list[MemberReport],   # 各成员数据（已聚合）
-    failed_sources: list[str],     # 采集失败的数据源标识，用于正文标注
-    date: date,                    # 日报日期
-    team_name: str,                # 团队名称
+    members: list[MemberReport],           # 各成员数据（已聚合）
+    failed_sources: list[str],             # 采集失败的数据源标识，决定哪些板块显示标注
+    date: date,                            # 日报日期
+    team_name: str,                        # 团队名称
+    failed_details: dict[str, list[str]] | None = None,  # 数据源 → 失败子项明细
 ) -> DailyReport: ...
 ```
 
-> `failed_sources` 是 ADR-004 新增入参。**没有它，proposal.md §3.2「采集失败显式标注」与 tasks.md Task 6 的对应验收标准在物理上无法实现** —— 生成层若拿不到失败信息，就无从区分「今日无记录」与「数据获取失败」。
+> `failed_sources` 与 `failed_details` 都是 ADR-004 新增。**没有它们，proposal.md §3.2「采集失败显式标注」与 tasks.md Task 6 的对应验收标准在物理上无法实现** —— 生成层若拿不到失败信息，就无从区分「今日无记录」与「数据获取失败」。
 
 ### 4.3 推送层接口
 
@@ -367,6 +407,7 @@ schedule:
 |------|------|
 | `GITHUB_TOKEN` | GitHub API 凭证 |
 | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 飞书应用凭证 |
+| `FEISHU_BOT_OPEN_ID` | 本应用机器人的 open_id；采集群消息时用于排除机器人自己发的消息（否则上一日推送的日报会被当作今日的讨论记录回采）。查得方式：`GET /open-apis/bot/v3/info` |
 | `SMTP_PASSWORD` | 邮箱授权码 |
 
 ### 4.5 聚合层接口（ADR-004 新增）
@@ -514,6 +555,29 @@ def report_alert(
 
 **代价**：`generate()` 与 `aggregate()` 的签名比书中示例更宽；编排层代码略增。换取的是 Task 6/9 的验收标准从「物理上无法完成」变为「可测试」。
 
+### ADR-005：引入 tzdata 作为时区数据库
+
+**状态**：已采纳
+
+**背景**：§6.5 要求按 `schedule.timezone`（默认 `Asia/Shanghai`）换算时间。Python 的 `zoneinfo` 从**系统**读取 IANA 时区数据库 —— Linux/macOS 自带，**Windows 不自带**。实测在开发机上 `ZoneInfo("Asia/Shanghai")` 直接抛 `ZoneInfoNotFoundError`。而本项目的部署环境是 Docker（Linux），开发环境是 Windows，两端都必须能跑。
+
+**选项**
+
+| 选项 | 优点 | 缺点 |
+|------|------|------|
+| **`tzdata`**（采纳） | 纯数据包、无传递依赖；`zoneinfo` 会自动优先使用它；全平台行为一致 | 多一个依赖（约 500KB），每年随 IANA 更新几次 |
+| 硬编码固定偏移 | 零依赖 | 只对中国时区成立；跨时区或历史偏移变更时算错；而"哪些时区能用固定偏移"这个判断本身就需要时区知识 |
+| 要求部署环境自带 tzdata | 零依赖 | 开发机（Windows）仍会失败，等于把问题推给每个开发者 |
+
+**决策**：引入 `tzdata` 依赖
+
+**理由**
+1. 纯数据包，无传递依赖，成本就是一次安装
+2. `zoneinfo` 自动优先使用它（系统自带时用系统的），引入后不需要改任何代码
+3. 硬编码偏移方案在「看起来能跑」与「悄悄算错」之间没有护栏 —— 这正是 §6.5 想避免的那类**静默不一致**
+
+**代价**：多一个依赖，且需要跟随 IANA 发布更新版本。对「定时任务、每日一次」的运行方式而言，这个代价可以忽略。
+
 ## 6. 非功能性约束
 
 proposal.md 已用一句话界定了性能与重试要求；本节将其展开为可实现的策略。
@@ -526,7 +590,9 @@ proposal.md 已用一句话界定了性能与重试要求；本节将其展开�
 |------|---------|
 | GitHub API 超时 | **超时重试** 3 次（间隔 5s），若仍失败则标记为失败源 |
 | GitHub API 限流（403/429） | **限流重试**：读取 `X-RateLimit-Reset`，等待至 reset 时刻后重试，上限 3 次。**与超时重试使用独立计数器**，互不消耗配额 |
+| 飞书 API 超时 | 重试 3 次，若仍失败则标记为失败源（与 GitHub 同一口径） |
 | 飞书 Token 过期 | 自动刷新 Token 后重试 1 次 |
+| 飞书接口返回业务错误码 | **不重试** —— `code != 0` 多为权限不足或参数错误，重试解决不了（如 230002 机器人不在群、99991672 权限未开通） |
 | 单个数据源完全不可用 | 跳过该数据源，日报中标注「xx 数据源获取失败」，其他数据源正常采集 |
 | **单个数据源部分失败**（多仓库场景） | 保留成功部分的数据；在对应板块标注失败的子项明细 |
 | 所有数据源都不可用 | 记录错误日志，**调用 `report_alert()` 发送告警**，不生成空日报 |
@@ -534,7 +600,7 @@ proposal.md 已用一句话界定了性能与重试要求；本节将其展开�
 | 飞书推送失败 | 重试 2 次，若仍失败则记录日志并**经邮件通道告警** |
 | 告警自身失败 | 仅记录日志，**不再递归告警**（防告警风暴） |
 
-**重试计数口径（ADR-004 明确）**：超时重试与限流重试是两类独立的重试，各自有 3 次上限。原因：限流是服务端的流量控制（等待后大概率成功），超时是网络或服务异常（重试是唯一手段），把二者合并计数会导致限流场景挤占超时重试的配额。
+**重试计数口径（ADR-004 明确）**：超时重试与限流重试是两类独立的重试，**各自有 3 次重试上限**（即初试 + 3 次重试 = 最多 4 次 HTTP 请求；超时场景下最长等待 3 × 5s = 15s）。原因：限流是服务端的流量控制（等待后大概率成功），超时是网络或服务异常（重试是唯一手段），把二者合并计数会导致限流场景挤占超时重试的配额。
 
 **关键原则**
 1. 采集层的失败不应阻塞生成层
@@ -593,7 +659,8 @@ proposal.md 已用一句话界定了性能与重试要求；本节将其展开�
 - 所有**内部** `datetime` 一律 tz-aware；`since` / `until` 在跨越模块边界前必须带 tzinfo
 - **API 边界处的归一化**：
   - GitHub 返回 UTC ISO8601（如 `2026-10-11T02:33:00Z`）→ 转 `Asia/Shanghai` 后取日期，参与「当日」判断
-  - 飞书消息返回**毫秒级 Unix 时间戳**（字符串）→ 按 UTC 解析后转目标时区
+  - 飞书**响应体**返回**毫秒级** Unix 时间戳（字符串）
+  - 飞书**请求参数**（如消息接口的 `start_time` / `end_time`）要求**秒级** Unix 时间戳 —— 与响应体的毫秒是两回事，发请求前需换算，搞反会导致查询窗口偏差 1000 倍
 - 禁止 naive datetime 参与比较；比较前统一换算到 `schedule.timezone`
 
 **为什么必须写死**：GitHub 用 UTC、飞书用毫秒时间戳、本机时区又可能是任意值。三者在没有约定时会各自按本地时钟解释「今天」，导致同一次执行采到的数据集与测试断言口径不一致 —— 而且是**静默**的不一致。
@@ -610,7 +677,7 @@ proposal.md §3.3 要求「识别非工作日（周末及法定节假日），�
 
 **为什么需要 `workdays` 清单**：中国的法定节假日安排包含**调休补班**——某些周六周日是法定工作日。只判周末会把补班日误判为休息而漏发日报，只判 `holidays` 则会把补班日误判为休息。两个清单缺一不可。
 
-**清单的维护**：由人工按年度国务院安排更新 `config.yaml`，本期不引入第三方节假日库（对应 proposal.md §2.3「不做…」所体现的最小依赖取向）。**清单过期不会导致程序错误**，只会按规则 3 退化为「周末休息、工作日上班」的朴素判断。
+**清单的维护**：由人工按年度国务院安排更新 `config.yaml`。本期不引入第三方节假日库 —— 节假日库本身也要跟着国务院的调休安排逐年更新，引入它只是把「维护一份清单」换成「维护一个依赖」，并未省掉维护成本，反而多了一层版本耦合。**清单过期不会导致程序错误**，只会按规则 3 退化为「周末休息、工作日上班」的朴素判断。
 
 ### 6.7 非工作日的行为
 

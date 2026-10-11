@@ -33,6 +33,13 @@
 | 17 | Task 2.5 | 新增任务：飞书 API 客户端作为 Task 4/5 的共享前置。二者都需要令牌管理与邮箱反查，若各自实现会违反表 6-2「两个任务修改同一个文件不可以并行」，也会产生两份行为不一致的令牌逻辑 | design.md §2、§4.1 |
 | 18 | Task 7/8 | 原「推送失败时触发对方通道告警」的验收**上移给 Task 9（编排层）**。若由模块自己触发，`email` 与 `lark_bot` 会互相引用形成循环依赖。二者改为额外暴露 `send_text` 供告警复用 | design.md §4.3 |
 | 19 | Task 8.5 | 新增任务：告警通道。它复用 Task 7/8 的 `send_text`，故须在二者之后交付 | design.md §4.3、§4.6 |
+| 20 | §4.2 / Task 6 | 新增 `failed_details` 入参。原 `failed_sources` 只承载数据源名，§3.2 承诺的子项明细（如 `owner/repoB`）**在透传链上无处安放**，Task 6 与 Task 9 分离执行必然对不齐 | design.md §1.1、§3.2 |
+| 21 | §3.3 / Task 2 | `DailyReport` 由 7 字段增至 8 字段（新增 `failed_details`），使报告对象本身可被程序化断言 | design.md §3.3 |
+| 22 | §3.1 / Task 4/5 | `assignee` / `sender` 明确为**飞书标识（open_id）**。书中标注「飞书用户名」，但 API 只返回 open_id，配置里也没有显示名 —— 填显示名会让飞书两源被整批静默丢弃 | 实测 API |
+| 23 | ADR-005 / Task 1 | 新增 `tzdata` 依赖。Windows 无系统 IANA 时区库，`ZoneInfo("Asia/Shanghai")` 实测抛 `ZoneInfoNotFoundError` | 实测环境 |
+| 24 | §6.1 | 补「飞书 API 超时」与「飞书业务错误码不重试」两行；明确重试口径为「初试 + 3 次重试」 | 实测 API |
+| 25 | §6.5 / Task 5 | 明确飞书**请求参数是秒级**时间戳而**响应体是毫秒级** —— 搞反会让查询窗口偏差 1000 倍 | 官方文档 |
+| 26 | §4.1 | 补客户端与配置的注入方式（仅关键字、供测试）、`lark_task` 的 `project_id=""` 实现、`lark_msg` 的群名附加调用 | 实测 API |
 
 ## 任务依赖图（DAG）
 
@@ -93,8 +100,9 @@ Task 10 (集成测试)
       `notifier/`（email.py、lark_bot.py、alert.py）、
       `shared/`（models.py、config.py、logger.py、errors.py、storage.py、calendar.py）、
       `tests/`
-- [ ] `pyproject.toml` 包含 httpx、pyyaml、jinja2 依赖
+- [ ] `pyproject.toml` 包含 httpx、pyyaml、jinja2、**tzdata** 依赖
 - [ ] `uv sync` 成功安装所有依赖
+- [ ] `python -c "from zoneinfo import ZoneInfo; ZoneInfo('Asia/Shanghai')"` 在 Windows 上不报 `ZoneInfoNotFoundError`（ADR-005）
 - [ ] `config.yaml.example` 包含 design.md §4.4 定义的**完整配置结构**，其中 members 映射表模板同时演示 `lark`（邮箱）与 `lark_open_id` 两种写法
 - [ ] `.env.example` 列出 design.md §4.4 的全部环境变量名，值为空占位符
 - [ ] `.gitignore` 包含 `.env`、`*.db`、`__pycache__/`、`.venv/`
@@ -108,7 +116,7 @@ Task 10 (集成测试)
 **依赖**：Task 1
 
 **验收标准**
-- [ ] `models.py` 定义 design.md §3 的全部数据模型：`CommitRecord`(7 字段)、`TaskRecord`(5 字段)、`MessageRecord`(4 字段)、`CollectResult[T]`(5 字段)、`MemberReport`(5 字段)、`DailyReport`(7 字段)、`MemberConfig`
+- [ ] `models.py` 定义 design.md §3 的全部数据模型：`CommitRecord`(7 字段)、`TaskRecord`(5 字段)、`MessageRecord`(4 字段)、`CollectResult[T]`(5 字段)、`MemberReport`(5 字段)、`DailyReport`(8 字段)、`MemberConfig`
 - [ ] 各模型字段名、类型、顺序与 design.md §3 的表一致
 - [ ] `config.py` 能读取 `config.yaml` 并返回配置对象
 - [ ] `config.py` 在配置缺少必填字段时抛出 `ConfigError`，且**错误信息包含缺失的字段名**
@@ -163,6 +171,7 @@ Task 10 (集成测试)
 - [ ] **超时重试** 3 次（间隔 5s），若仍失败则返回 `CollectResult(success=False)`
 - [ ] **限流**（HTTP 403 或 429）时，读取 `X-RateLimit-Reset` 并等待至该时刻后重试，上限 3 次
 - [ ] 超时重试与限流重试**使用独立计数器**，互不消耗配额
+- [ ] 重试口径为「初试 + 3 次重试 = 最多 4 次请求」（design.md §6.1）
 - [ ] 使用 Mock 数据的单元测试全部通过
 
 > **补充（对齐 design.md §3.2 / ADR-003 / ADR-004）**
@@ -193,6 +202,8 @@ Task 10 (集成测试)
 > **补充（对齐 design.md §3.2 / ADR-003）**
 - [ ] 返回值包含 `CollectResult` 的**全部 5 个字段**，且 `source == "lark_task"`
 - [ ] 成功/失败分支与 Task 3 一致（含 `source` / `success` / `records` / `failed` / `error` 五个字段的取值）
+- [ ] `TaskRecord.assignee` 填 **open_id**，不是显示名 —— 配置里只有 `lark_open_id` 与邮箱，填显示名会让聚合一条都匹配不上（design.md §3.1）
+- [ ] `project_id=""` 时枚举全部可读清单再逐个采集；单个清单失败不影响其他清单（清单即失败子项粒度）
 - [ ] **不抛出**异常给调用方
 - [ ] 飞书返回的**毫秒级时间戳**正确归一化为 tz-aware datetime（design.md §6.5）
 
@@ -215,6 +226,7 @@ Task 10 (集成测试)
 > **补充（对齐 design.md §3.2 / ADR-003 与 §6.2）**
 - [ ] 返回值包含 `CollectResult` 的**全部 5 个字段**，且 `source == "lark_msg"`
 - [ ] 成功/失败分支与 Task 3 一致；**不抛出**异常给调用方
+- [ ] `MessageRecord.sender` 填 **open_id**，与 Task 4 及聚合层三方口径一致（design.md §3.1）
 - [ ] 敏感词过滤在**采集阶段**执行（design.md §6.2「2. 数据安全」）——命中敏感词的原始内容不进入返回值，也不写入日志
 - [ ] 机器人自身发送的消息被排除（避免上一日推送的日报被当作讨论记录回采；机器人 open_id 见 `.env` 的 `FEISHU_BOT_OPEN_ID`）
 
@@ -241,6 +253,9 @@ Task 10 (集成测试)
       - `CollectResult(success=True, records=[])` + 空 `failed_sources` → 「今日无记录」
       - `failed_sources` 非空 → 「数据获取失败」+ 失败原因
 - [ ] `generate()` 通过 `failed_sources` 入参获取失败信息，**不直接依赖采集层类型**
+- [ ] `failed_sources` 决定**哪些板块**显示标注；`failed_details` 决定标注括号里的**子项明细**
+- [ ] 部分失败时明细呈现为 `GitHub 数据获取失败（owner/repoB）`；整源失败时呈现该源的 `error` 摘要
+- [ ] Markdown 与 HTML **两种产物都要断言**含数据源级标注与子项明细
 - [ ] 聚合按 `name` 为主键；`lark`（邮箱）与 `lark_open_id` 两种写法均能正确匹配
 - [ ] 不在映射表中的账号，其记录被丢弃（断言其不出现在任何 `MemberReport` 中）
 
@@ -320,7 +335,8 @@ Task 10 (集成测试)
 
 > **补充（对齐 design.md §2 / §4.4 / §4.6 / §6.6）**
 - [ ] 聚合通过调用 `generator.aggregator.aggregate()` 完成，**`main.py` 内不实现任何聚合或数据变换逻辑**
-- [ ] 采集失败信息由 `main.py` 从各 `CollectResult` 提取后透传给 `generate(failed_sources=...)`
+- [ ] 流程开始时调用一次 `storage.init_db(path)`，路径取自 `config.schedule.db_path`
+- [ ] 采集失败信息由 `main.py` 从各 `CollectResult` 提取后透传：`failed_sources` 取 `source`（`success=False` 的那些），`failed_details[source]` 取 `failed`（为空则用 `error` 摘要）
 - [ ] 非工作日（周末及法定节假日）自动跳过，日志记录跳过原因与判定依据；`--dry-run` / `--check` 不受此约束
 - [ ] 日报生成后调用 `storage.save_report()` 写入 SQLite；`db_path` 取自配置
 - [ ] 所有数据源失败时调用 `report_alert()` 发送告警，而非生成空日报
@@ -344,7 +360,7 @@ Task 10 (集成测试)
 - [ ] 执行耗时少于 60s（Mock 环境下计时）
 
 > **补充（对齐 design.md §3.2 / §6.1）**
-- [ ] 部分失败场景：多仓库中一个仓库失败，日报保留成功仓库的数据并标注失败子项
+- [ ] 部分失败场景：多仓库中一个仓库失败，日报保留成功仓库的数据并标注失败子项（断言 `failed_details["github"]` 含该仓库名，Markdown 与 HTML 均出现）
 - [ ] 全部失败场景同时断言 `report_alert()` 被调用
 - [ ] 非工作日场景：`main.py` 跳过采集与生成，退出码为 0
 - [ ] 耗时断言使用 Mock 环境（不打真实网络），计时口径与 proposal.md §3.2 一致
