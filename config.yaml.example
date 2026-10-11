@@ -1,0 +1,71 @@
+# ============================================================
+# 智能日报生成器 — 配置示例
+# 复制为 config.yaml 后按需修改。
+#
+# 安全约束（design.md §6.2）：本文件只承载【非敏感】配置。
+# 所有 API 密钥、授权码一律走环境变量，见 .env.example。
+# 严禁把 Token / Secret / 授权码写进本文件。
+# ============================================================
+
+team:
+  name: "研发一组"
+
+# ---------- 身份映射表（design.md §3.4）----------
+# 以 name 为主键，把 GitHub 账号与飞书身份关联起来。
+# 不在本表中的账号，其记录会被丢弃（design.md §6.2 访问控制）。
+#
+# 飞书标识二选一：
+#   lark          —— 企业邮箱，运行时反查为 open_id（需 contact:user.id:readonly 权限）
+#   lark_open_id  —— 飞书 open_id（ou_ 开头），无需额外权限
+# 两者同时填写时，以 lark_open_id 为准。
+members:
+  - name: "张三"
+    github: "zhangsan"
+    lark: "zhangsan@company.com"
+  - name: "李四"
+    github: "lisi-dev"
+    lark_open_id: "ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  - name: "王五"
+    github: "wangwu"
+    lark: "wangwu@company.com"
+
+github:
+  # 采集范围：仅采集此处列出的仓库（design.md §6.2 访问控制）
+  repos:
+    - "owner/repo"
+
+lark:
+  # 目标群 ID，同时用于消息采集与日报推送
+  chat_id: "oc_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  # 任务清单 GUID；留空字符串表示不限定清单，采集全部任务
+  project_id: ""
+
+smtp:
+  host: "smtp.qq.com"
+  port: 465
+  # 发件人；授权码走环境变量 SMTP_PASSWORD
+  sender: "sender@qq.com"
+  # 日报收件人（团队 Leader）
+  recipients:
+    - "leader@company.com"
+
+filters:
+  # 消息采集的包含关键词：只保留命中其一的消息
+  keywords:
+    - "项目"
+    - "需求"
+  # 敏感词黑名单：命中即剔除，不进返回值也不进日志（design.md §6.2）
+  sensitive_keywords:
+    - "薪资"
+    - "绩效"
+    - "裁员"
+
+schedule:
+  # 采集窗口时区：决定「当日 00:00」的日界（design.md §6.5）
+  timezone: "Asia/Shanghai"
+  db_path: "data/daily_report.db"
+  log_dir: "logs"
+  # 法定假日（YYYY-MM-DD），命中则跳过日报（design.md §6.6）
+  holidays: []
+  # 调休补班日（YYYY-MM-DD）—— 这些日子即使是周末也要出日报
+  workdays: []
