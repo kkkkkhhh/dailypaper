@@ -83,11 +83,17 @@ collector/ ──▶ generator/ ──▶ notifier/          all ──▶ share
 
 - [x] Task 1 项目结构与基础配置
 - [x] Task 2 共享基础层（`shared/`：models/config/logger/errors/storage/calendar）
-- [ ] Task 3 GitHub 采集模块
-- [ ] Task 4 飞书任务采集模块
-- [ ] Task 5 飞书消息采集模块
-- [ ] Task 6 聚合与日报生成模块
-- [ ] Task 7 邮件推送模块
+- [x] Task 2.5 飞书 API 客户端（`collector/lark_client.py`）
+- [x] Task 3 GitHub 采集模块
+- [x] Task 4 飞书任务采集模块
+- [x] Task 5 飞书消息采集模块
+- [x] Task 6 聚合与日报生成模块
+- [x] Task 7 邮件推送模块
 - [ ] Task 8 飞书推送模块
-- [ ] Task 9 主编排入口
+- [ ] Task 8.5 告警通道（`notifier/alert.py`）
+- [ ] Task 9 主编排入口（`main.py`）
 - [ ] Task 10 集成测试
+
+**注意**：告警由**编排层**触发，推送模块自己绝不触发 —— 否则 `email` 与 `lark_bot`
+会互相引用形成循环依赖（design.md §4.3）。`email.py` 已有一条 AST 测试从结构上
+禁止它导入 notifier 包内其他模块，`lark_bot.py` 与 `alert.py` 同理。
