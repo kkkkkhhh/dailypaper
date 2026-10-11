@@ -56,7 +56,7 @@ HTML_TEMPLATE = """\
 {% if section.kind == 'commits' %}
   <li><code>{{ r.repo }}</code> {{ r.message }}（+{{ r.additions }} 行 / -{{ r.deletions }} 行，{{ r.files_changed }} 个文件）</li>
 {% elif section.kind == 'tasks' %}
-  <li>{{ r.title }}：{{ r.status_from }} → {{ r.status_to }}（{{ r.updated_at | hhmm }}）</li>
+  <li>{{ r.title }}：{{ r.status_from | status_text }} → {{ r.status_to | status_text }}（{{ r.updated_at | hhmm }}）</li>
 {% elif section.kind == 'messages' %}
   <li>[{{ r.timestamp | hhmm }}] {{ r.content }}</li>
 {% endif %}
@@ -75,7 +75,7 @@ HTML_TEMPLATE = """\
 {% if section.kind == 'commits' %}
   <li><code>{{ r.repo }}</code> {{ r.message }}（+{{ r.additions }} 行 / -{{ r.deletions }} 行，{{ r.files_changed }} 个文件）</li>
 {% elif section.kind == 'tasks' %}
-  <li>{{ r.title }}：{{ r.status_from }} → {{ r.status_to }}（{{ r.updated_at | hhmm }}）</li>
+  <li>{{ r.title }}：{{ r.status_from | status_text }} → {{ r.status_to | status_text }}（{{ r.updated_at | hhmm }}）</li>
 {% elif section.kind == 'messages' %}
   <li>[{{ r.timestamp | hhmm }}] {{ r.content }}</li>
 {% endif %}
@@ -87,6 +87,25 @@ HTML_TEMPLATE = """\
 {% endfor %}
 </body>
 </html>"""
+
+
+#: 飞书任务接口的状态码 → 日报里的中文表述。
+#:
+#: 接口给的是 todo / done 这类机器标识，直接印在日报上（「todo → done」）
+#: 对读日报的人不友好。翻译是**表述层**的职责，采集层照原样返回，
+#: 这样状态码本身的语义不会被两处改动同时影响。
+#: 未收录的状态码原样透出 —— 与其猜一个中文名，不如让人看见原始值。
+_STATUS_LABELS = {
+    "todo": "待办",
+    "doing": "进行中",
+    "in_progress": "进行中",
+    "done": "已完成",
+    "completed": "已完成",
+}
+
+
+def _status_text(code: str) -> str:
+    return _STATUS_LABELS.get(str(code).strip().lower(), str(code))
 
 
 def _hhmm(value: datetime) -> str:
@@ -104,8 +123,8 @@ def _commit_line(record: Any) -> str:
 
 def _task_line(record: Any) -> str:
     return (
-        f"- {record.title}：{record.status_from} → {record.status_to}"
-        f"（{_hhmm(record.updated_at)}）"
+        f"- {record.title}：{_status_text(record.status_from)} → "
+        f"{_status_text(record.status_to)}（{_hhmm(record.updated_at)}）"
     )
 
 
@@ -171,6 +190,7 @@ def render_markdown(context: dict[str, Any]) -> str:
 def _make_env(autoescape: bool) -> Environment:
     env = Environment(autoescape=autoescape, trim_blocks=True, lstrip_blocks=True)
     env.filters["hhmm"] = _hhmm
+    env.filters["status_text"] = _status_text
     return env
 
 
