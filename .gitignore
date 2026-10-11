@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# 本地实际配置（含各团队的仓库名、群 ID、收件人；模板见 config.yaml.example）
+config.yaml
+
 # 运行产物
 *.db
 *.sqlite

@@ -33,6 +33,33 @@ _TOKEN_INVALID_CODES = frozenset({99991661, 99991663, 99991664, 99991668})
 _EXPIRY_SKEW_SECONDS = 60
 
 
+def _http_error(response: httpx.Response) -> httpx.HTTPStatusError:
+    """把飞书响应体里的业务错误码**并进异常消息**，而不是丢掉。
+
+    飞书把业务错误塞在 HTTP 400 的响应体里（形如 ``{"code": 230027,
+    "msg": "Lack of necessary permissions, ext=need scope:
+    im:message.group_msg"}``）。直接 ``raise_for_status()`` 只会得到
+    「400 Bad Request」—— 而真正有用的信息（缺哪个权限）恰恰在响应体里。
+
+    保留 ``HTTPStatusError`` 类型不变，这样既有的
+    ``except httpx.HTTPStatusError`` 调用方（如推送层的
+    ``_business_rejection``）不受影响。
+    """
+    detail = ""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict) and payload.get("code") is not None:
+        detail = f"（飞书 code={payload['code']} msg={payload.get('msg')}）"
+
+    return httpx.HTTPStatusError(
+        f"HTTP {response.status_code}{detail}",
+        request=response.request,
+        response=response,
+    )
+
+
 class LarkClient:
     """飞书 API 客户端。
 
@@ -163,7 +190,8 @@ class LarkClient:
             params=params,
             json=json_body,
         )
-        response.raise_for_status()
+        if response.is_error:
+            raise _http_error(response)
         return response.json()
 
     # ------------------------------------------------------------------

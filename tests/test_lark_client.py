@@ -274,6 +274,63 @@ def test_post_also_refreshes_on_invalid_token(feishu):
 
 
 # --------------------------------------------------------------------------
+# HTTP 错误里的飞书业务码
+# --------------------------------------------------------------------------
+
+
+def test_http_error_message_carries_feishu_business_code(feishu):
+    """飞书把业务错误塞在 HTTP 400 的响应体里，异常消息必须带上它。
+
+    否则调用方只看到「400 Bad Request」，而真正有用的信息 ——
+    缺的是哪个权限 —— 恰恰在响应体里。这是实测时踩到的：
+    消息接口报 400，排查后才发现响应体里写着 `need scope: im:message.group_msg`。
+    """
+    feishu.route_handler = lambda request: httpx.Response(
+        400,
+        json={
+            "code": 230027,
+            "msg": "Lack of necessary permissions, ext=need scope: im:message.group_msg",
+        },
+    )
+    client = feishu.client()
+
+    with pytest.raises(httpx.HTTPStatusError) as exc:
+        client.get("/open-apis/im/v1/messages")
+
+    message = str(exc.value)
+    assert "400" in message
+    assert "230027" in message
+    assert "im:message.group_msg" in message
+
+
+def test_http_error_still_raises_when_body_is_not_json(feishu):
+    """响应体不是 JSON 时也不能吞掉错误。"""
+    feishu.route_handler = lambda request: httpx.Response(
+        502, text="<html>bad gateway</html>"
+    )
+    client = feishu.client()
+
+    with pytest.raises(httpx.HTTPStatusError) as exc:
+        client.get("/open-apis/im/v1/messages")
+
+    assert "502" in str(exc.value)
+
+
+def test_http_error_keeps_the_response_attached(feishu):
+    """响应对象要挂在异常上 —— 推送层靠 `exc.response` 读业务码决定要不要重试。"""
+    feishu.route_handler = lambda request: httpx.Response(
+        400, json={"code": 230020, "msg": "rate limit"}
+    )
+    client = feishu.client()
+
+    with pytest.raises(httpx.HTTPStatusError) as exc:
+        client.post("/open-apis/im/v1/messages")
+
+    assert exc.value.response.status_code == 400
+    assert exc.value.response.json()["code"] == 230020
+
+
+# --------------------------------------------------------------------------
 # 邮箱反查 open_id
 # --------------------------------------------------------------------------
 
