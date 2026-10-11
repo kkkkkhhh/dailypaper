@@ -209,6 +209,71 @@ def test_non_token_error_is_not_retried(feishu):
 
 
 # --------------------------------------------------------------------------
+# POST 请求（推送层发消息需要它 —— 没有公开的 post 就只能去调私有 _request）
+# --------------------------------------------------------------------------
+
+
+def test_post_uses_post_method(feishu):
+    client = feishu.client()
+
+    client.post("/open-apis/im/v1/messages")
+
+    assert feishu.requests[-1].method == "POST"
+
+
+def test_post_attaches_bearer_token(feishu):
+    client = feishu.client()
+
+    client.post("/open-apis/im/v1/messages")
+
+    assert feishu.auth_headers()[-1] == "Bearer t-1"
+
+
+def test_post_sends_json_body(feishu):
+    client = feishu.client()
+
+    client.post(
+        "/open-apis/im/v1/messages",
+        params={"receive_id_type": "chat_id"},
+        json_body={"receive_id": "oc_x", "msg_type": "text"},
+    )
+
+    request = feishu.requests[-1]
+    assert "receive_id_type=chat_id" in str(request.url)
+    assert b'"receive_id"' in request.content
+    assert b'"msg_type"' in request.content
+
+
+def test_post_shares_token_cache_with_get(feishu):
+    """post 与 get 用同一套令牌缓存，不应各自换取。"""
+    client = feishu.client()
+
+    client.get("/open-apis/im/v1/chats")
+    client.post("/open-apis/im/v1/messages")
+
+    assert feishu.tokens_issued == 1
+
+
+def test_post_also_refreshes_on_invalid_token(feishu):
+    calls = {"n": 0}
+
+    def route(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(200, json={"code": 99991663, "msg": "token invalid"})
+        return httpx.Response(200, json={"code": 0, "data": {"message_id": "om_1"}})
+
+    feishu.route_handler = route
+    client = feishu.client()
+
+    payload = client.post("/open-apis/im/v1/messages", json_body={"a": 1})
+
+    assert payload["code"] == 0
+    assert client.token_refresh_count == 1
+    assert calls["n"] == 2
+
+
+# --------------------------------------------------------------------------
 # 邮箱反查 open_id
 # --------------------------------------------------------------------------
 

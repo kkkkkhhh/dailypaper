@@ -115,6 +115,20 @@ class LarkClient:
         """
         return self._request("GET", path, params=params)
 
+    def post(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """发起 POST 请求，返回飞书响应的 JSON。
+
+        与 ``get()`` 共享同一套令牌注入与失效自动刷新逻辑。推送层发送消息
+        （``im/v1/messages``）需要它 —— 没有这个公开方法，调用方就只能去用
+        私有的 ``_request``，那等于把内部实现变成事实上的公共接口。
+        """
+        return self._request("POST", path, params=params, json_body=json_body)
+
     def _request(
         self,
         method: str,
