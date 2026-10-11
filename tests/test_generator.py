@@ -512,6 +512,52 @@ def test_markdown_ends_with_single_newline():
     assert not report.markdown.endswith("\n\n")
 
 
+def test_multiline_commit_message_shows_only_the_subject():
+    """GitHub 的 commit message 是「标题 + 正文」，日报只该显示标题。
+
+    真机跑时踩到的：提交正文可以很长（有人把整个 PR 描述写进去），
+    全渲染出来会让日报被淹没 —— 而 proposal.md §1.1 要解决的恰恰是
+    「信息密度低」。
+    """
+    body = "第一行是标题\n\n这里是一大段正文。\n还有第二段。\n\nCo-Authored-By: someone"
+    commits, tasks, messages = results(commits=[commit("zhangsan", message=body)])
+    report = generate(
+        aggregate(commits, tasks, messages, MEMBERS), [], REPORT_DATE, "研发一组"
+    )
+
+    assert "第一行是标题" in report.markdown
+    assert "一大段正文" not in report.markdown
+    assert "Co-Authored-By" not in report.markdown
+
+    assert "第一行是标题" in report.html
+    assert "一大段正文" not in report.html
+
+
+def test_overlong_commit_subject_is_truncated():
+    commits, tasks, messages = results(
+        commits=[commit("zhangsan", message="feat: " + "很长的标题" * 30)]
+    )
+    report = generate(
+        aggregate(commits, tasks, messages, MEMBERS), [], REPORT_DATE, "研发一组"
+    )
+
+    line = next(
+        line for line in report.markdown.splitlines() if line.startswith("- `")
+    )
+    assert line.endswith("个文件）")
+    assert "…" in line
+    assert len(line) < 200
+
+
+def test_single_line_commit_message_is_untouched():
+    commits, tasks, messages = results(commits=[commit("zhangsan", message="fix: 短标题")])
+    report = generate(
+        aggregate(commits, tasks, messages, MEMBERS), [], REPORT_DATE, "研发一组"
+    )
+
+    assert "fix: 短标题（+10 行 / -2 行，3 个文件）" in report.markdown
+
+
 def test_html_is_wellformed_document():
     commits, tasks, messages = results()
     report = generate(

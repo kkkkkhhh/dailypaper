@@ -79,7 +79,7 @@
 | CommitRecord（代码提交记录） | 类型 | 说明 |
 |---|---|---|
 | `author` | str | 提交者（GitHub 用户名） |
-| `message` | str | 提交信息（Commit Message） |
+| `message` | str | 提交信息（Commit Message，**完整原文**） |
 | `timestamp` | datetime | 提交时间（tz-aware） |
 | `repo` | str | 仓库名称 |
 | `additions` | int | 新增行数 |
@@ -87,6 +87,9 @@
 | `files_changed` | int | 变更文件数 |
 
 **共 7 个字段。**
+
+> **`message` 存完整原文，日报只渲染首行**。GitHub 的 commit message 是「标题 + 空行 + 正文」，正文可以很长（有人会把整段 PR 描述写进去）。采集层照原样返回不截断，是采集层该做的事；**截断是表述层的决定** —— 日报里过长会让一屏放不下几条提交，与 proposal.md §1.1 要解决的「信息密度低」正好相悖。完整正文仍保留在记录与 SQLite 历史中。
+
 
 | TaskRecord（任务变更记录） | 类型 | 说明 |
 |---|---|---|

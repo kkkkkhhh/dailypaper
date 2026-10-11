@@ -54,7 +54,7 @@ HTML_TEMPLATE = """\
 <ul>
 {% for r in member.records %}
 {% if section.kind == 'commits' %}
-  <li><code>{{ r.repo }}</code> {{ r.message }}（+{{ r.additions }} 行 / -{{ r.deletions }} 行，{{ r.files_changed }} 个文件）</li>
+  <li><code>{{ r.repo }}</code> {{ r.message | commit_subject }}（+{{ r.additions }} 行 / -{{ r.deletions }} 行，{{ r.files_changed }} 个文件）</li>
 {% elif section.kind == 'tasks' %}
   <li>{{ r.title }}：{{ r.status_from | status_text }} → {{ r.status_to | status_text }}（{{ r.updated_at | hhmm }}）</li>
 {% elif section.kind == 'messages' %}
@@ -73,7 +73,7 @@ HTML_TEMPLATE = """\
 <ul>
 {% for r in member.records %}
 {% if section.kind == 'commits' %}
-  <li><code>{{ r.repo }}</code> {{ r.message }}（+{{ r.additions }} 行 / -{{ r.deletions }} 行，{{ r.files_changed }} 个文件）</li>
+  <li><code>{{ r.repo }}</code> {{ r.message | commit_subject }}（+{{ r.additions }} 行 / -{{ r.deletions }} 行，{{ r.files_changed }} 个文件）</li>
 {% elif section.kind == 'tasks' %}
   <li>{{ r.title }}：{{ r.status_from | status_text }} → {{ r.status_to | status_text }}（{{ r.updated_at | hhmm }}）</li>
 {% elif section.kind == 'messages' %}
@@ -113,9 +113,25 @@ def _hhmm(value: datetime) -> str:
     return value.strftime("%H:%M") if isinstance(value, datetime) else str(value)
 
 
+#: 提交标题在日报里的最大显示宽度。
+#:
+#: GitHub 的 commit message 是「标题 + 空行 + 正文」，正文可以很长（有人把
+#: 整个 PR 描述写进去）。日报只取**首行**，否则一屏放不下三条提交 ——
+#: 而 proposal.md §1.1 要解决的恰恰是「信息密度低、格式参差不齐」。
+#: 正文并未丢失，它仍完整存在 `CommitRecord.message` 与 SQLite 历史里。
+_COMMIT_SUBJECT_WIDTH = 120
+
+
+def _commit_subject(message: str) -> str:
+    subject = (message or "").strip().splitlines()[0].strip() if message else ""
+    if len(subject) > _COMMIT_SUBJECT_WIDTH:
+        subject = subject[: _COMMIT_SUBJECT_WIDTH - 1].rstrip() + "…"
+    return subject
+
+
 def _commit_line(record: Any) -> str:
     return (
-        f"- `{record.repo}` {record.message}"
+        f"- `{record.repo}` {_commit_subject(record.message)}"
         f"（+{record.additions} 行 / -{record.deletions} 行，"
         f"{record.files_changed} 个文件）"
     )
@@ -191,6 +207,7 @@ def _make_env(autoescape: bool) -> Environment:
     env = Environment(autoescape=autoescape, trim_blocks=True, lstrip_blocks=True)
     env.filters["hhmm"] = _hhmm
     env.filters["status_text"] = _status_text
+    env.filters["commit_subject"] = _commit_subject
     return env
 
 
