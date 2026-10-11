@@ -1,13 +1,34 @@
 # 智能日报生成器 — 任务清单（tasks.md）
 
 ## 元信息
-- 关联规范：`specs/proposal.md`、`specs/design.md`
+- 关联规范：`specs/proposal.md` v0.5、`specs/design.md` v0.5
+- 文档版本：v0.5
 - 任务总数：10
 - 预计总执行时间：3 到 4h（包含测试）
 - 执行策略：按依赖关系顺序执行，独立任务可并行执行
 - 依据：《SDD 实战：规范驱动开发之道》（黄佳著，人民邮电出版社）第 6 章
 
-> **本文件相对书中的一处补充**：Task 3/4/5 增加了 `CollectResult` 相关验收标准，以对齐 design.md 的 ADR-003。书中 tasks.md 的原验收标准写作「`collect()` 函数签名符合 design.md §4.1 的接口定义」，是自引用式的，因此不与 ADR-003 冲突；此处显式列出，避免实现时遗漏 `success=False` 分支。
+### 本文件相对书中的补充与修订清单
+
+书中 §6.5 的 tasks.md 是示例文本；本文件在其基础上做了以下**显式**修订。凡修订处均在正文以 `> 补充` 或 `> 修订` 标注。
+
+| # | 位置 | 修订内容 | 依据 |
+|---|------|---------|------|
+| 1 | Task 1 第 3 条 | 书中写「`uv sync` 成功安装所有依赖」，保持原文（`uv` 实测可用，v0.12.18） | 第 6 章原文 |
+| 2 | Task 1 | 新增 `.env.example` 与 `.gitignore` 验收 | design.md §6.2 |
+| 3 | Task 2 | 新增 `ConfigError`（书只列了三个异常）；新增环境变量读取与缺失报错的验收 | design.md §4.4、§6.2 |
+| 4 | Task 2 | 新增 `shared/calendar.py` | design.md §4.4、§6.6 |
+| 5 | Task 3/4/5 描述行 | 由「返回 XRecord 列表」改为「返回 `CollectResult[XRecord]`」 | design.md §3.2、ADR-003 |
+| 6 | Task 3 | 由「API 超时重试 3 次」的单一重试，扩展为**超时重试与限流重试各自独立计数**；限流判定由 `403` 扩展为 `403/429` | design.md §6.1、ADR-004 |
+| 7 | Task 3/4/5 | 失败分支由书的「返回空列表 + 错误日志」改写为「返回 `CollectResult(success=False)`」——**这一条与 ADR-003 直接冲突，必须改** | design.md §3.2 |
+| 8 | Task 3/4/5 | 新增 `failed` 字段与多仓库部分失败的验收 | design.md §3.2、ADR-004 |
+| 9 | Task 6 | 新增 `failed_sources` 入参与对应验收（书里缺此通道，导致原验收无法实现） | design.md §4.2、ADR-004 |
+| 10 | Task 6 | 新增聚合职责与 `aggregator.py` | design.md §4.5、ADR-004 |
+| 11 | Task 6 | 新增「HTML 转义」验收 | tasks 层新增的安全加固（design.md §6.2 只要求不外泄 diff 内容，未要求转义） |
+| 12 | Task 7/8 | 新增告警通道调用验收 | design.md §4.6、§6.1、ADR-004 |
+| 13 | Task 9 | 新增节假日判定、环境变量检查、聚合调用方式 | design.md §4.4、§6.2、§6.5、§6.6 |
+| 14 | Task 9 | 新增 SQLite 写入验收 | design.md §4.4、ADR-002 |
+| 15 | 全文 | 新增时区约定 | design.md §6.5 |
 
 ## 任务依赖图（DAG）
 
@@ -21,7 +42,7 @@ Task 2 (共享基础层)
 │ GitHub   │ 飞书任务 │ 飞书消息 │
 └──────────┴──────────┴──────────┘
    ↓
-Task 6 (日报生成模块)
+Task 6 (聚合 + 日报生成模块)
    ↓
 ┌─────────────┬─────────────┐
 │ Task 7      │ Task 8      │        ← 两个推送模块可以并行执行
@@ -35,6 +56,8 @@ Task 10 (集成测试)
 
 - **关键路径**：Task 1 → Task 2 → Task 3/4/5 → Task 6 → Task 7/8 → Task 9 → Task 10
 - **最大并行度**：3（Task 3 + Task 4 + Task 5 同时执行）
+
+> **修订（相对书图 6-4）**：Task 6 的标题由「日报生成模块（formatter + template）」扩为「聚合 + 日报生成模块」，因其新增了 `aggregator.py`（见修订清单 #10）。依赖关系不变。
 
 ### 并行执行的安全边界
 
@@ -51,38 +74,55 @@ Task 10 (集成测试)
 
 **描述**：初始化项目目录结构，创建 pyproject.toml，安装核心依赖，创建配置文件模板
 
-**输入**：`specs/design.md`（模块职责定义）
-**输出**：项目根目录结构 + `pyproject.toml` + `config.yaml.example`
+**输入**：`specs/design.md`（模块职责定义 §2）
+**输出**：项目根目录结构 + `pyproject.toml` + `config.yaml.example` + `.env.example`
 **依赖**：无
 
 **验收标准**
-- [ ] 目录结构符合 design.md §2 的模块划分（`collector/`、`generator/`、`notifier/`、`shared/`、`tests/`）
+- [ ] 目录结构符合 design.md §2 的模块划分，且文件清单与之一致：
+      `collector/`（github.py、lark_task.py、lark_msg.py）、
+      `generator/`（aggregator.py、formatter.py、template.py）、
+      `notifier/`（email.py、lark_bot.py、alert.py）、
+      `shared/`（config.py、logger.py、errors.py、storage.py、calendar.py）、
+      `tests/`
 - [ ] `pyproject.toml` 包含 httpx、pyyaml、jinja2 依赖
-- [ ] 依赖安装成功（本机无 uv，改用 `pip install -e .` 或 `pip install -r` 等效方式）
-- [ ] `config.yaml.example` 包含 members 映射表模板
+- [ ] `uv sync` 成功安装所有依赖
+- [ ] `config.yaml.example` 包含 design.md §4.4 定义的**完整配置结构**，其中 members 映射表模板同时演示 `lark`（邮箱）与 `lark_open_id` 两种写法
+- [ ] `.env.example` 列出 design.md §4.4 的全部环境变量名，值为空占位符
 - [ ] `.gitignore` 包含 `.env`、`*.db`、`__pycache__/`、`.venv/`
 
 ## Task 2: 实现共享基础层
 
-**描述**：实现配置读取、日志记录、错误处理和 SQLite 存储 4 个共享模块
+**描述**：实现配置读取、日志记录、错误处理、SQLite 存储和工作日判定 5 个共享模块
 
-**输入**：`config.yaml.example`（配置格式）、design.md §6（非功能约束）
-**输出**：`shared/config.py`、`shared/logger.py`、`shared/errors.py`、`shared/storage.py`
+**输入**：`config.yaml.example`（配置格式）、design.md §4.4（共享层接口契约）、design.md §6（非功能约束）
+**输出**：`shared/config.py`、`shared/logger.py`、`shared/errors.py`、`shared/storage.py`、`shared/calendar.py`
 **依赖**：Task 1
 
 **验收标准**
 - [ ] `config.py` 能读取 `config.yaml` 并返回配置对象
-- [ ] `config.py` 在配置缺少必填字段时抛出明确的错误信息
+- [ ] `config.py` 在配置缺少必填字段时抛出 `ConfigError`，且**错误信息包含缺失的字段名**
 - [ ] `logger.py` 输出 JSON lines 格式日志
-- [ ] `errors.py` 定义 `CollectorError`、`GeneratorError`、`NotifierError` 三个自定义异常
+- [ ] `errors.py` 定义 `CollectorError`、`GeneratorError`、`NotifierError`、`ConfigError` 四个自定义异常
 - [ ] `storage.py` 能创建 SQLite，写入和查询日报记录
+- [ ] `storage.py` 的 `init_db()` 被调用前，`save_report()` 不产生未定义行为
+- [ ] `calendar.py::is_workday()` 正确实现 design.md §6.6 的**三级判定顺序**（workdays → holidays → 周末）
 - [ ] 所有模块包含对应的单元测试，测试通过
+
+> **补充（对齐 design.md §6.2「1. 密钥管理」）**
+- [ ] 敏感凭证（`GITHUB_TOKEN`、`FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`SMTP_PASSWORD`）**仅从环境变量读取**，`config.yaml` 只承载非敏感配置
+- [ ] 环境变量已设置时，`Config` 对应字段取到该值
+- [ ] 环境变量缺失时抛出 `ConfigError`，且**错误信息包含缺失的变量名**
+- [ ] 单元测试使用 `monkeypatch.setenv` / `delenv` 覆盖以上两条分支
+
+> **补充（对齐 design.md §6.6）**
+- [ ] `is_workday()` 测试覆盖：普通工作日、普通周末、法定假日落在工作日、调休补班日落在周末
 
 ## Task 3: 实现 GitHub 采集模块
 
-**描述**：调用 GitHub API 获取指定仓库在指定时间范围内的 Commit 记录，返回 CommitRecord 列表
+**描述**：调用 GitHub API 获取指定仓库在采集窗口内的 Commit 记录，返回 `CollectResult[CommitRecord]`
 
-**输入**：design.md §3.1（CommitRecord 数据模型）、design.md §4.1（采集层接口契约）、design.md §3.2（CollectResult）
+**输入**：design.md §3.1（CommitRecord 数据模型）、design.md §3.2（CollectResult 语义）、design.md §4.1（采集层接口契约）、design.md §6.5（时区约定）
 **输出**：`collector/github.py` + `tests/test_github.py`
 **依赖**：Task 2
 
@@ -90,38 +130,45 @@ Task 10 (集成测试)
 - [ ] `collect()` 函数签名符合 design.md §4.1 的接口定义
 - [ ] 返回的每个 CommitRecord 包含全部 7 个字段且类型正确
 - [ ] 支持分页查询（GitHub API 默认每页 30 条）
-- [ ] API 超时重试 3 次（间隔 5s），若仍失败则返回 `CollectResult(success=False)` + 错误日志
-- [ ] GitHub API 限流（HTTP 403 / 429）时，等待 reset 时间后重试
+- [ ] **超时重试** 3 次（间隔 5s），若仍失败则返回 `CollectResult(success=False)`
+- [ ] **限流**（HTTP 403 或 429）时，读取 `X-RateLimit-Reset` 并等待至该时刻后重试，上限 3 次
+- [ ] 超时重试与限流重试**使用独立计数器**，互不消耗配额
 - [ ] 使用 Mock 数据的单元测试全部通过
 
-> **补充（对齐 ADR-003）**
-- [ ] 成功时返回 `CollectResult.success=True`，`records` 为记录列表（可为空）
-- [ ] 失败时返回 `CollectResult.success=False`，`error` 字段含可诊断的错误信息
-- [ ] 任何情况下**不抛出**异常给调用方（失败以返回值表达）
+> **补充（对齐 design.md §3.2 / ADR-003 / ADR-004）**
+- [ ] 全部成功且有数据时：`success=True`、`records` 非空、`failed=[]`、`error=None`
+- [ ] 全部成功但无数据时：`success=True`、`records=[]`、`failed=[]` —— **区别于失败**
+- [ ] 多仓库部分失败（如 2 个仓库中 1 个 404）：`success=False`、`records` **保留成功仓库的记录**、`failed` 含失败仓库名
+- [ ] 全部仓库失败时：`success=False`、`records=[]`、`failed` 含全部仓库名
+- [ ] 任何情况下**不抛出**异常给调用方（失败一律以返回值表达）
+- [ ] 时间过滤基于 tz-aware datetime，GitHub 返回的 UTC 时间正确归一化到配置时区（design.md §6.5）
 
 ## Task 4: 实现飞书任务采集模块
 
-**描述**：调用飞书开放平台 API 获取指定项目中当日状态变更的任务列表，返回 TaskRecord 列表
+**描述**：调用飞书开放平台 API 获取指定任务清单中在采集窗口内发生状态变更的任务，返回 `CollectResult[TaskRecord]`
 
-**输入**：design.md §3.1（TaskRecord 数据模型）、design.md §4.1（采集层接口契约）
+**输入**：design.md §3.1（TaskRecord 数据模型）、design.md §3.2（CollectResult 语义）、design.md §4.1（采集层接口契约）、design.md §6.5（时区约定）
 **输出**：`collector/lark_task.py` + `tests/test_lark_task.py`
 **依赖**：Task 2
 
 **验收标准**
 - [ ] `collect()` 函数签名符合 design.md §4.1 的接口定义
 - [ ] 返回的每个 TaskRecord 包含全部 5 个字段且类型正确
+- [ ] `project_id` 为空字符串时不限定清单，采集全部任务
 - [ ] 飞书 Token 过期时自动刷新后重试 1 次
-- [ ] API 超时重试 3 次，若仍失败则返回 `CollectResult(success=False)` + 错误日志
+- [ ] 超时重试 3 次，若仍失败则返回 `CollectResult(success=False)`
 - [ ] 使用 Mock 数据的单元测试全部通过
 
-> **补充（对齐 ADR-003）**
-- [ ] 成功/失败分支与 Task 3 一致，均以 `CollectResult` 返回值表达
+> **补充（对齐 design.md §3.2 / ADR-003）**
+- [ ] 成功/失败分支与 Task 3 一致（含 `success` / `records` / `failed` / `error` 四个字段的取值）
+- [ ] **不抛出**异常给调用方
+- [ ] 飞书返回的**毫秒级时间戳**正确归一化为 tz-aware datetime（design.md §6.5）
 
 ## Task 5: 实现飞书消息采集模块
 
-**描述**：调用飞书开放平台 API 获取指定群的消息记录，按关键词过滤，返回 MessageRecord 列表
+**描述**：调用飞书开放平台 API 获取指定群的消息记录，按关键词过滤，返回 `CollectResult[MessageRecord]`
 
-**输入**：design.md §3.1（MessageRecord 数据模型）、design.md §4.1（采集层接口契约）
+**输入**：design.md §3.1（MessageRecord 数据模型）、design.md §3.2（CollectResult 语义）、design.md §4.1（采集层接口契约）、design.md §6.2（安全约束）
 **输出**：`collector/lark_msg.py` + `tests/test_lark_msg.py`
 **依赖**：Task 2
 
@@ -133,18 +180,21 @@ Task 10 (集成测试)
 - [ ] 飞书 Token 过期时自动刷新后重试 1 次
 - [ ] 使用 Mock 数据的单元测试全部通过
 
-> **补充（对齐 ADR-003）**
-- [ ] 成功/失败分支与 Task 3 一致，均以 `CollectResult` 返回值表达
+> **补充（对齐 design.md §3.2 / ADR-003 与 §6.2）**
+- [ ] 成功/失败分支与 Task 3 一致；**不抛出**异常给调用方
+- [ ] 敏感词过滤在**采集阶段**执行（design.md §6.2「2. 数据安全」）——命中敏感词的原始内容不进入返回值，也不写入日志
+- [ ] 机器人自身发送的消息被排除（避免上一日推送的日报被当作讨论记录回采；机器人 open_id 见 `.env` 的 `FEISHU_BOT_OPEN_ID`）
 
-## Task 6: 实现日报生成模块
+## Task 6: 实现聚合与日报生成模块
 
-**描述**：接收各成员的采集数据，按「代码提交 → 任务进展 → 协作沟通」组织日报内容，输出 Markdown 和 HTML 格式文件
+**描述**：按身份映射表聚合各数据源的采集结果，再按「代码提交 → 任务进展 → 协作沟通」组织日报内容，输出 Markdown 和 HTML 格式
 
-**输入**：design.md §3.3（MemberReport、DailyReport 数据模型）、design.md §4.2（生成层接口契约）
-**输出**：`generator/formatter.py`、`generator/template.py` + `tests/test_generator.py`
+**输入**：design.md §3.3（MemberReport、DailyReport 数据模型）、design.md §3.4（跨系统身份映射）、design.md §4.2（生成层接口契约）、design.md §4.5（聚合层接口契约）
+**输出**：`generator/aggregator.py`、`generator/formatter.py`、`generator/template.py` + `tests/test_generator.py`
 **依赖**：Task 2
 
 **验收标准**
+- [ ] `aggregate()` 函数签名符合 design.md §4.5 的接口定义
 - [ ] `generate()` 函数签名符合 design.md §4.2 的接口定义
 - [ ] 输出的 `DailyReport.markdown` 包含三个部分标题
 - [ ] 输出的 `DailyReport.html` 可被浏览器正确渲染
@@ -153,15 +203,23 @@ Task 10 (集成测试)
 - [ ] Markdown 到 HTML 的转换格式正确
 - [ ] 使用 Mock 数据的单元测试全部通过
 
-> **补充（对齐 design.md §6.2 安全约束）**
+> **补充（对齐 design.md §4.2 / §3.4 / ADR-004）**
+- [ ] 「今日无记录」与「数据获取失败」是**两种不同文案**，由**不同输入**触发，测试须分别构造：
+      - `CollectResult(success=True, records=[])` + 空 `failed_sources` → 「今日无记录」
+      - `failed_sources` 非空 → 「数据获取失败」+ 失败原因
+- [ ] `generate()` 通过 `failed_sources` 入参获取失败信息，**不直接依赖采集层类型**
+- [ ] 聚合按 `name` 为主键；`lark`（邮箱）与 `lark_open_id` 两种写法均能正确匹配
+- [ ] 不在映射表中的账号，其记录被丢弃（断言其不出现在任何 `MemberReport` 中）
+
+> **补充（对齐 design.md §6.2「2. 数据安全」）**
 - [ ] 日报中**不出现**代码 diff 的具体内容，只有统计数据（`+N 行 / -M 行`）
-- [ ] 生产 HTML 时对用户数据做转义，防止提交信息中的 `<script>` 等注入
+- [ ] 生成 HTML 时对用户数据做转义，提交信息中的 `<script>` 等不被当作标签执行
 
 ## Task 7: 实现邮件推送模块
 
 **描述**：将 HTML 格式日报通过 SMTP 发送给指定收件人
 
-**输入**：design.md §4.3（推送层接口契约）
+**输入**：design.md §4.3（推送层接口契约）、design.md §4.6（告警接口）
 **输出**：`notifier/email.py` + `tests/test_email.py`
 **依赖**：Task 6
 
@@ -172,11 +230,14 @@ Task 10 (集成测试)
 - [ ] 发送失败时重试 2 次，仍失败则返回 `False` + 错误日志
 - [ ] 使用 Mock SMTP 的单元测试通过
 
+> **补充（对齐 design.md §6.1 / §4.6）**
+- [ ] 邮件发送最终失败时，触发**飞书通道**告警（走 `report_alert()`，而非再走邮件）
+
 ## Task 8: 实现飞书推送模块
 
-**描述**：将 Markdown 格式日报通过飞书机器人 webhook 发送到指定群
+**描述**：将 Markdown 格式日报通过飞书机器人发送到指定群
 
-**输入**：design.md §4.3（推送层接口契约）
+**输入**：design.md §4.3（推送层接口契约）、design.md §4.6（告警接口）
 **输出**：`notifier/lark_bot.py` + `tests/test_lark_bot.py`
 **依赖**：Task 6
 
@@ -184,7 +245,11 @@ Task 10 (集成测试)
 - [ ] `send()` 函数签名符合 design.md §4.3 的接口定义
 - [ ] 发送的消息为 Markdown 格式
 - [ ] 发送失败时重试 2 次，仍失败则返回 `False` + 错误日志
-- [ ] 使用 Mock webhook 的单元测试通过
+- [ ] 使用 Mock 接口的单元测试通过
+
+> **补充（对齐 design.md §4.3 的通道说明与 §6.1）**
+- [ ] 实现走**应用机器人**通道（`im/v1/messages`，`receive_id_type=chat_id`），而非自定义机器人 webhook —— 因为契约的入参是 `chat_id`
+- [ ] 飞书推送最终失败时，触发**邮件通道**告警（走 `report_alert()`）
 
 ## Task 9: 实现主编排入口
 
@@ -202,10 +267,13 @@ Task 10 (集成测试)
 - [ ] 若所有数据源失败，不生成空日报，记录错误日志
 - [ ] 执行日志包含：开始时间、各数据源数据采集条数、推送结果、结束时间
 
-> **补充（对齐 design.md §6.2 / §6.3）**
-- [ ] 非工作日（周末）自动跳过，日志记录跳过原因
-- [ ] 日报生成后写入 SQLite 历史记录
-- [ ] 按 config.yaml 的 members 映射聚合；不在映射表中的账号记录被丢弃
+> **补充（对齐 design.md §2 / §4.4 / §4.6 / §6.6）**
+- [ ] 聚合通过调用 `generator.aggregator.aggregate()` 完成，**`main.py` 内不实现任何聚合或数据变换逻辑**
+- [ ] 采集失败信息由 `main.py` 从各 `CollectResult` 提取后透传给 `generate(failed_sources=...)`
+- [ ] 非工作日（周末及法定节假日）自动跳过，日志记录跳过原因与判定依据；`--dry-run` / `--check` 不受此约束
+- [ ] 日报生成后调用 `storage.save_report()` 写入 SQLite；`db_path` 取自配置
+- [ ] 所有数据源失败时调用 `report_alert()` 发送告警，而非生成空日报
+- [ ] `--check` 对环境变量缺失给出**逐项**明确报错
 
 ## Task 10: 集成测试
 
@@ -220,7 +288,13 @@ Task 10 (集成测试)
 - [ ] 降级场景：若某个数据源超时，日报中需要标注「数据获取失败」，其他部分正常
 - [ ] 空数据场景：若某成员当日无任何记录，日报中需要显示「今日无记录」
 - [ ] 全部失败场景：若所有数据源不可用，不生成日报，记录错误日志
-- [ ] 执行耗时少于 60s（Mock 环境下）
+- [ ] 执行耗时少于 60s（Mock 环境下计时）
+
+> **补充（对齐 design.md §3.2 / §6.1）**
+- [ ] 部分失败场景：多仓库中一个仓库失败，日报保留成功仓库的数据并标注失败子项
+- [ ] 全部失败场景同时断言 `report_alert()` 被调用
+- [ ] 非工作日场景：`main.py` 跳过采集与生成，退出码为 0
+- [ ] 耗时断言使用 Mock 环境（不打真实网络），计时口径与 proposal.md §3.2 一致
 
 ---
 
@@ -233,7 +307,7 @@ Task 10 (集成测试)
 | 阶段 1 | Task 1（项目初始化） | 串行 |
 | 阶段 2 | Task 2（共享基础层） | 串行 |
 | 阶段 3 | **Task 3 + Task 4 + Task 5**（三个采集模块） | **并行** |
-| 阶段 4 | Task 6（日报生成模块） | 串行 |
+| 阶段 4 | Task 6（聚合 + 日报生成模块） | 串行 |
 | 阶段 5 | **Task 7 + Task 8**（两个推送模块） | **并行** |
 | 阶段 6 | Task 9（主编排入口） | 串行 |
 | 阶段 7 | Task 10（集成测试） | 串行 |

@@ -1,0 +1,27 @@
+# 密钥与凭证 —— 严禁提交（design.md §6.2 安全约束）
+.env
+.env.*
+!.env.example
+
+# 运行产物
+*.db
+*.sqlite
+*.sqlite3
+logs/
+output/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
