@@ -4,9 +4,11 @@ Markdown 与 HTML **由同一份上下文分别渲染**，而不是先出 Markdo
 HTML。这样两个格式的内容天然一致，也省掉一个 Markdown 解析依赖
 （requirements 里只有 httpx / pyyaml / jinja2）。
 
-两个环境的 autoescape 不同，这是关键：
-- HTML 必须转义 —— 提交信息里出现 `<script>` 就会被当标签执行
-- Markdown 不能转义 —— 转义会把用户输入的 `&` 变成 `&amp;`，污染正文
+**为什么 Markdown 不用 Jinja 模板**：Markdown 的空白行是有语义的 ——
+标题、引用块、列表之间少了空行，CommonMark 会把相邻内容并进同一个块
+（例如引用块会把下一行当成它的延续）。模板的 `trim_blocks` / `lstrip_blocks`
+恰恰会吃掉这些换行，调起来靠试。用同一份上下文直接拼装，空白完全可控，
+也省掉一类只在渲染后才看得出来的 bug。
 """
 
 from __future__ import annotations
@@ -16,52 +18,8 @@ from typing import Any
 
 from jinja2 import Environment
 
-MARKDOWN_TEMPLATE = """\
-# {{ team_name }} 日报 · {{ date }}
-
-> 生成时间：{{ generated_at }}
-{% for section in sections %}
-## {{ section.title }}
-
-{% if section.failed %}
-> ⚠️ {{ section.source_label }} 数据获取失败{% if section.failed_detail %}（{{ section.failed_detail }}）{% endif %}
-{% if section.has_records %}
-
-以下为**已成功采集到的部分**（数据不完整）：
-{% for member in section.members if member.records %}
-### {{ member.name }}
-
-{% for r in member.records %}
-{% if section.kind == 'commits' %}- `{{ r.repo }}` {{ r.message }}（+{{ r.additions }} 行 / -{{ r.deletions }} 行，{{ r.files_changed }} 个文件）
-{% elif section.kind == 'tasks' %}- {{ r.title }}：{{ r.status_from }} → {{ r.status_to }}（{{ r.updated_at | hhmm }}）
-{% elif section.kind == 'messages' %}- [{{ r.timestamp | hhmm }}] {{ r.content }}
-{% endif %}
-{% endfor %}
-{% endfor %}
-{% endif %}
-{% else %}
-{% for member in section.members %}
-### {{ member.name }}
-
-{% if not member.records %}
-今日无记录
-{% elif section.kind == 'commits' %}
-{% for r in member.records %}
-- `{{ r.repo }}` {{ r.message }}（+{{ r.additions }} 行 / -{{ r.deletions }} 行，{{ r.files_changed }} 个文件）
-{% endfor %}
-{% elif section.kind == 'tasks' %}
-{% for r in member.records %}
-- {{ r.title }}：{{ r.status_from }} → {{ r.status_to }}（{{ r.updated_at | hhmm }}）
-{% endfor %}
-{% elif section.kind == 'messages' %}
-{% for r in member.records %}
-- [{{ r.timestamp | hhmm }}] {{ r.content }}
-{% endfor %}
-{% endif %}
-{% endfor %}
-{% endif %}
-{% endfor %}"""
-
+#: HTML 的空白无语义，适合模板；autoescape 必须开 —— 提交信息里出现
+#: `<script>` 就会被当标签执行。
 HTML_TEMPLATE = """\
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -136,25 +94,88 @@ def _hhmm(value: datetime) -> str:
     return value.strftime("%H:%M") if isinstance(value, datetime) else str(value)
 
 
+def _commit_line(record: Any) -> str:
+    return (
+        f"- `{record.repo}` {record.message}"
+        f"（+{record.additions} 行 / -{record.deletions} 行，"
+        f"{record.files_changed} 个文件）"
+    )
+
+
+def _task_line(record: Any) -> str:
+    return (
+        f"- {record.title}：{record.status_from} → {record.status_to}"
+        f"（{_hhmm(record.updated_at)}）"
+    )
+
+
+def _message_line(record: Any) -> str:
+    return f"- [{_hhmm(record.timestamp)}] {record.content}"
+
+
+#: 板块类型 → 单条记录的 Markdown 行渲染器
+_LINE_BUILDERS = {
+    "commits": _commit_line,
+    "tasks": _task_line,
+    "messages": _message_line,
+}
+
+
+def _markdown_member(kind: str, member: dict[str, Any]) -> str:
+    blocks = [f"### {member['name']}"]
+    if not member["records"]:
+        blocks.append("今日无记录")
+    else:
+        build = _LINE_BUILDERS[kind]
+        blocks.append("\n".join(build(record) for record in member["records"]))
+    return "\n\n".join(blocks)
+
+
+def _markdown_section(section: dict[str, Any]) -> str:
+    blocks = [f"## {section['title']}"]
+
+    if section["failed"]:
+        notice = f"> ⚠️ {section['source_label']} 数据获取失败"
+        if section["failed_detail"]:
+            notice += f"（{section['failed_detail']}）"
+        blocks.append(notice)
+
+        # 失败板块绝不写「今日无记录」—— 我们并不知道成员当天有没有记录，
+        # 那句话等于用「没干活」掩盖「采集失败」。有数据的按部分失败展示。
+        if section["has_records"]:
+            blocks.append("以下为**已成功采集到的部分**（数据不完整）：")
+            for member in section["members"]:
+                if member["records"]:
+                    blocks.append(_markdown_member(section["kind"], member))
+        return "\n\n".join(blocks)
+
+    for member in section["members"]:
+        blocks.append(_markdown_member(section["kind"], member))
+    return "\n\n".join(blocks)
+
+
+def render_markdown(context: dict[str, Any]) -> str:
+    """渲染 Markdown 日报。上下文结构见 formatter.build_context()。
+
+    各块之间统一用空行分隔 —— Markdown 的块级语法靠空行划界，
+    少一个空行就可能让引用块把下一行吞进去。
+    """
+    blocks = [
+        f"# {context['team_name']} 日报 · {context['date']}",
+        f"> 生成时间：{context['generated_at']}",
+    ]
+    blocks.extend(_markdown_section(section) for section in context["sections"])
+    return "\n\n".join(blocks) + "\n"
+
+
 def _make_env(autoescape: bool) -> Environment:
     env = Environment(autoescape=autoescape, trim_blocks=True, lstrip_blocks=True)
     env.filters["hhmm"] = _hhmm
     return env
 
 
-_markdown_env = _make_env(autoescape=False)
 _html_env = _make_env(autoescape=True)
-
-_markdown_template = _markdown_env.from_string(MARKDOWN_TEMPLATE)
 _html_template = _html_env.from_string(HTML_TEMPLATE)
-
-
-def render_markdown(context: dict[str, Any]) -> str:
-    """渲染 Markdown 日报。
-
-    上下文结构见 formatter.build_context()。
-    """
-    return _markdown_template.render(**context)
 
 
 def render_html(context: dict[str, Any]) -> str:

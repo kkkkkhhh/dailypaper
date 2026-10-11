@@ -467,6 +467,51 @@ def test_markdown_contains_no_diff_content():
     assert "+10 行" in report.markdown  # 统计数字在，diff 内容不在
 
 
+def test_markdown_blocks_are_separated_by_blank_lines():
+    """Markdown 的块级语法靠空行划界，少一个空行含义就变了。
+
+    最典型的是引用块：`> ⚠️ 数据获取失败` 后面紧跟的正文行会被 CommonMark
+    当作该引用的**延续**（lazy continuation），整段被渲染进引用里。
+    这条测试钉住这个性质，免得将来改模板时被 trim_blocks 之类的空白处理
+    悄悄破坏 —— 那种 bug 只有肉眼看渲染结果才发现得了。
+    """
+    commits, tasks, messages = results(commits=[commit("zhangsan")])
+    report = generate(
+        aggregate(commits, tasks, messages, MEMBERS),
+        ["github"],
+        REPORT_DATE,
+        "研发一组",
+        failed_details={"github": ["owner/repoB"]},
+    )
+
+    lines = report.markdown.splitlines()
+
+    for index, line in enumerate(lines[:-1]):
+        if line.startswith(">"):
+            following = lines[index + 1]
+            assert following == "" or following.startswith(">"), (
+                f"引用块会把 {following!r} 吞进引用里"
+            )
+
+    for index, line in enumerate(lines):
+        if not line.startswith("#"):
+            continue
+        if index > 0:
+            assert lines[index - 1] == "", f"{line!r} 前缺少空行"
+        if index < len(lines) - 1:
+            assert lines[index + 1] == "", f"{line!r} 后缺少空行"
+
+
+def test_markdown_ends_with_single_newline():
+    commits, tasks, messages = results()
+    report = generate(
+        aggregate(commits, tasks, messages, MEMBERS), [], REPORT_DATE, "研发一组"
+    )
+
+    assert report.markdown.endswith("\n")
+    assert not report.markdown.endswith("\n\n")
+
+
 def test_html_is_wellformed_document():
     commits, tasks, messages = results()
     report = generate(
