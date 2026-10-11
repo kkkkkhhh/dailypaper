@@ -253,14 +253,27 @@ def send(
     recipients: list[str],     # 收件人邮箱列表
 ) -> bool: ...                 # 成功/失败
 
+def send_text(
+    subject: str,              # 邮件主题
+    text: str,                 # 纯文本正文
+    recipients: list[str],     # 收件人邮箱列表
+) -> bool: ...                 # 成功/失败；供告警通道复用
+
 # notifier/lark_bot.py
 def send(
     report: DailyReport,       # 日报对象
     chat_id: str,              # 目标群 ID
 ) -> bool: ...                 # 成功/失败
+
+def send_text(
+    text: str,                 # 纯文本内容
+    chat_id: str,              # 目标群 ID
+) -> bool: ...                 # 成功/失败；供告警通道复用
 ```
 
-**注意**：推送层接口返回 `bool` 而非 `CollectResult` —— 推送失败不产生「部分成功」的语义歧义，且失败信息通过日志与告警通道传递（见 §4.5）。
+**注意**：推送层接口返回 `bool` 而非 `CollectResult` —— 推送失败不产生「部分成功」的语义歧义。
+
+**关于失败后是否告警**：推送层**不负责**触发告警，只如实返回成败。由编排层（`main.py`）根据返回值决定是否调用 `report_alert()`。这样安排是为了避免循环依赖 —— 若 `email.py` 自己触发飞书告警，而 `lark_bot.py` 又触发邮件告警，两者就互相依赖了。分层上也更干净：通知层只负责"送达"，"送不到怎么办"是编排决策。
 
 **关于 `lark_bot` 的通道选择**：接口签名的参数是 `chat_id` 而非 webhook URL，因此实现走**应用机器人**通道（`POST /open-apis/im/v1/messages`，`receive_id_type=chat_id`），而非自定义机器人的 webhook。二者都可向群推送消息，但只有前者以 `chat_id` 定位目标；自定义机器人的 webhook 地址本身即目标，没有 `chat_id` 参数，与本文档的契约不符。
 
@@ -385,9 +398,11 @@ def report_alert(
 ) -> None: ...
 ```
 
-**为什么需要独立于 `email.send` / `lark_bot.send`**：这两个接口的入参都是 `DailyReport`，而告警场景（§6.1 的「所有数据源都不可用」「推送失败」）发生时**日报根本不存在**，或在逻辑上不允许作为告警载体（推送失败时不能再依赖同一通道）。因此告警需要一条不依赖 `DailyReport` 的独立通道。
+**为什么需要独立于 `email.send` / `lark_bot.send`**：这两个接口的入参都是 `DailyReport`，而告警场景（§6.1 的「所有数据源都不可用」「推送失败」）发生时**日报根本不存在**，或在逻辑上不允许作为告警载体（推送失败时不能再依赖同一通道）。因此告警需要一条不依赖 `DailyReport` 的独立入口，复用 `send_text` 完成实际投递。
 
 **投递策略**：默认向**未失败**的通道投递；告警本身失败时仅记录日志，不再递归告警（避免告警风暴）。
+
+**调用方**：由编排层 `main.py` 调用，**不是**由推送模块自己触发（原因见 §4.3）。
 
 ## 5. 技术选型（ADR）
 
