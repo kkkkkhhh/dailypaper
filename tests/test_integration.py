@@ -23,7 +23,6 @@ import yaml
 import main
 from collector import github as github_module
 from collector import lark_msg as lark_msg_module
-from collector import lark_task as lark_task_module
 from collector.lark_client import LarkClient
 from notifier import email as email_module
 from notifier import lark_bot as lark_bot_module
@@ -115,28 +114,16 @@ class FakeGithub:
 
 
 class FakeFeishu:
+    """假飞书服务端。不实现任务接口 —— 该数据源已移出本期（proposal.md 变更记录）。"""
+
     def __init__(self) -> None:
         self.token_status = 200
-        self.tasklists: list[dict] = [{"guid": "tl_1"}]
-        self.tasks: dict[str, list[dict]] = {}
         self.messages: list[dict] = []
         self.chat_name = "智能日报"
         self.fail_messages_api = False
         self.fail_send = False
         self.sent: list[dict] = []
         self.message_query_params: dict[str, str] = {}
-
-    def add_task(self, guid, summary, assignee_open_id, completed_at):
-        self.tasks.setdefault(guid, []).append(
-            {
-                "guid": f"task_{len(self.tasks.get(guid, []))}",
-                "summary": summary,
-                "completed_at": as_epoch_ms(completed_at),
-                "members": [
-                    {"id": assignee_open_id, "type": "user", "role": "assignee", "name": "x"}
-                ],
-            }
-        )
 
     def add_message(self, sender_open_id, content, when):
         self.messages.append(
@@ -171,19 +158,6 @@ class FakeFeishu:
 
         if not request.headers.get("Authorization"):
             return httpx.Response(401, json={"code": 99991661, "msg": "no token"})
-
-        if path == "/open-apis/task/v2/tasklists":
-            return httpx.Response(
-                200,
-                json={"code": 0, "data": {"items": self.tasklists, "has_more": False}},
-            )
-
-        for guid, items in self.tasks.items():
-            if path == f"/open-apis/task/v2/tasklists/{guid}/tasks":
-                return httpx.Response(
-                    200,
-                    json={"code": 0, "data": {"items": items, "has_more": False}},
-                )
 
         if path == f"/open-apis/im/v1/chats/{CHAT_ID}":
             return httpx.Response(
@@ -288,9 +262,6 @@ class World:
 
         self.monkeypatch.setattr(main.github, "collect", github_collect)
         self.monkeypatch.setattr(
-            lark_task_module, "LarkClient", lambda *a, **k: LarkClient(*a, transport=lark_transport, **k)
-        )
-        self.monkeypatch.setattr(
             lark_msg_module, "LarkClient", lambda *a, **k: LarkClient(*a, transport=lark_transport, **k)
         )
         self.monkeypatch.setattr(
@@ -299,7 +270,6 @@ class World:
         self.monkeypatch.setattr(
             main, "LarkClient", lambda *a, **k: LarkClient(*a, transport=lark_transport, **k)
         )
-        lark_task_module._client = None
         lark_bot_module._client = None
 
     def _patch_smtp(self):
@@ -370,7 +340,6 @@ def world(tmp_path, monkeypatch):
         REPO, "sha2", "lisi-dev", "refactor: 提取 CollectResult 到共享层",
         WORKDAY.replace(hour=11, minute=45), 96, 141, 9,
     )
-    w.feishu.add_task("tl_1", "日报模板设计", "ou_zhang", WORKDAY.replace(hour=16, minute=30))
     w.feishu.add_message("ou_zhang", "项目模板已提交，麻烦帮忙看下", WORKDAY.replace(hour=14, minute=32))
     w.feishu.add_message("ou_wang", "项目这边今天下午请假", WORKDAY.replace(hour=15, minute=10))
     return w
@@ -396,13 +365,11 @@ def test_happy_path_produces_a_complete_report(world):
     assert [m.name for m in report.members] == ["张三", "李四", "王五"]
 
     assert "## 代码提交" in report.markdown
-    assert "## 任务进展" in report.markdown
     assert "## 协作沟通" in report.markdown
+    assert "任务进展" not in report.markdown  # 该数据源已移出本期
 
     assert "feat: 日报模板支持三段式编排" in report.markdown
     assert "+214 行 / -37 行" in report.markdown
-    # 采集层返回的是接口原始状态码（todo/done），表述层翻成中文
-    assert "日报模板设计：待办 → 已完成（16:30）" in report.markdown
     assert "项目模板已提交，麻烦帮忙看下" in report.markdown
 
 
@@ -431,7 +398,6 @@ def test_records_are_attributed_to_the_right_people(world):
     assert [c.message for c in by_name["李四"].commits] == ["refactor: 提取 CollectResult 到共享层"]
     assert by_name["王五"].commits == []
 
-    assert [t.title for t in by_name["张三"].tasks] == ["日报模板设计"]
     assert [m.content for m in by_name["王五"].messages] == ["项目这边今天下午请假"]
 
 
@@ -512,8 +478,8 @@ def test_one_source_down_does_not_block_the_others(world):
     assert report.failed_sources == ["lark_msg"]
     assert "数据获取失败" in report.markdown
 
-    task_section = report.markdown.split("## 任务进展")[1].split("## 协作沟通")[0]
-    assert "日报模板设计" in task_section
+    commit_block = report.markdown.split("## 代码提交", 1)[1].split("\n## ", 1)[0]
+    assert "feat: 日报模板支持三段式编排" in commit_block
 
 
 # ---------------------------------------------------------------------------
@@ -525,14 +491,13 @@ def test_empty_day_shows_no_records_today(world):
     """清空的是各接口返回的**列表内容**，而不是字典本身 ——
     把字典清掉会让假服务端返回 404，那测的就变成「故障」而非「空数据」了。"""
     world.github.repos[REPO] = []
-    world.feishu.tasks["tl_1"] = []
     world.feishu.messages = []
 
     assert world.run(now=WORKDAY) == main.EXIT_OK
 
     report = read_report(world)
     assert report.failed_sources == []  # 全成功，只是没数据
-    assert report.markdown.count("今日无记录") == 9  # 3 个成员 × 3 个板块
+    assert report.markdown.count("今日无记录") == 6  # 3 个成员 × 2 个板块
     assert "数据获取失败" not in report.markdown
 
 
@@ -555,16 +520,6 @@ def test_all_sources_down_aborts_without_empty_report(world):
     world.github.fail.add(REPO)
     world.feishu.fail_messages_api = True
 
-    original = world.feishu.handler
-
-    def failing_handler(request):
-        if request.url.path == "/open-apis/task/v2/tasklists":
-            return httpx.Response(200, json={"code": 99991672, "msg": "no permission"})
-        return original(request)
-
-    world.monkeypatch.setattr(world.feishu, "handler", failing_handler)
-    world._patch_http()
-
     assert world.run(now=WORKDAY) == main.EXIT_FAILED
     assert read_report(world) is None  # 不生成空日报
 
@@ -581,16 +536,6 @@ def test_all_sources_down_sends_an_alert(world):
     world.github.fail.add(REPO)
     world.feishu.fail_messages_api = True
 
-    original = world.feishu.handler
-
-    def failing_handler(request):
-        if request.url.path == "/open-apis/task/v2/tasklists":
-            return httpx.Response(200, json={"code": 99991672, "msg": "no permission"})
-        return original(request)
-
-    world.monkeypatch.setattr(world.feishu, "handler", failing_handler)
-    world._patch_http()
-
     alerts = []
     world.monkeypatch.setattr(
         main.alert,
@@ -602,6 +547,7 @@ def test_all_sources_down_sends_an_alert(world):
 
     assert len(alerts) == 1
     assert "所有数据源均不可用" in alerts[0][0]
+    assert "github" in alerts[0][1]
 
 
 # ---------------------------------------------------------------------------

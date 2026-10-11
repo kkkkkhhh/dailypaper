@@ -16,9 +16,12 @@ from generator.template import render_html, render_markdown
 logger = get_logger("generator.formatter")
 
 # (板块标题, 数据源标识, MemberReport 上的字段名, 展示用名称)
+#
+# 没有「任务进展」板块：飞书任务源已移出本期（proposal.md 变更记录）。
+# 一个在当前技术约束下永远为空的板块，会在每天的日报上显示「今日无记录」，
+# 而那句话的含义是「今天没人做任务」，与事实（应用看不到任务）不符。
 _SECTIONS: tuple[tuple[str, str, str, str], ...] = (
     ("代码提交", "github", "commits", "GitHub"),
-    ("任务进展", "lark_task", "tasks", "飞书任务"),
     ("协作沟通", "lark_msg", "messages", "飞书消息"),
 )
 

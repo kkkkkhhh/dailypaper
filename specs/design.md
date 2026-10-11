@@ -52,6 +52,20 @@
 
 **黄金法则**：选择能满足需求的最简架构 —— 「一切应尽可能简单，但不能过于简单」。
 
+### 1.3 本期未接入的模块（v1.1 预备）
+
+`collector/lark_task.py` 及其 31 个测试**已实现且通过**，但**未接入 `main.py` 的流水线**。原因是需求层收窄（proposal.md 变更记录）：飞书任务 API 在应用身份下无法访问用户个人清单，唯一可行路径 `user_access_token` 需要 OAuth 回调地址与令牌存储，与 §2.3「不需要常驻后台服务」冲突，须作为**独立的架构变更**另行评估。
+
+**连带保留的 v1.1 接口**（当前不被读写，但形态已定，接入时不必重设计）：
+
+| 保留项 | 说明 |
+|--------|------|
+| `TaskRecord`（§3.1，5 字段） | 任务变更记录的数据模型 |
+| `MemberReport.tasks`（§3.3） | 成员报告中承载任务记录的字段 |
+| `aggregate()` 的 `tasks` 参数（§4.5） | 签名不变，本期由编排层传入空结果 |
+
+**日报不设「任务进展」板块** —— 一个在当前技术约束下永远为空的板块，会在每天的日报上显示「今日无记录」，而那句话的含义是「今天没人做任务」，与事实（应用看不到任务）不符。**一个永远说谎的板块比没有这个板块更糟。**
+
 ## 2. 模块职责
 
 单一职责原则：每个模块应当有且仅有一个引发变更的理由。
@@ -60,7 +74,7 @@
 
 | 模块 | 文件 | 负责 | **不负责** |
 |------|------|------|-----------|
-| `collector/` | `github.py`<br>`lark_client.py`<br>`lark_task.py`<br>`lark_msg.py` | 从外部 API 获取原始数据：<br>· GitHub Commit 数据<br>· **飞书 API 客户端**（令牌管理 + 身份反查，供两个飞书采集模块共用）<br>· 飞书任务状态数据<br>· 飞书群消息数据 | · 不做数据格式化<br>· 不去重判断<br>· 不做推送<br>· **不做跨源聚合** |
+| `collector/` | `github.py`<br>`lark_client.py`<br>`lark_msg.py`<br>~~`lark_task.py`~~ | 从外部 API 获取原始数据：<br>· GitHub Commit 数据<br>· **飞书 API 客户端**（令牌管理 + 身份反查，供飞书采集模块共用）<br>· 飞书群消息数据<br>· ~~飞书任务状态数据~~ | · 不做数据格式化<br>· 不去重判断<br>· 不做推送<br>· **不做跨源聚合** |
 | `generator/` | `aggregator.py`<br>`formatter.py`<br>`template.py` | 把原始数据组织为日报：<br>· **按成员映射聚合跨源记录**<br>· 数据整理<br>· Markdown 生成<br>· 日报模板管理 | · 不做数据采集<br>· 不调 API<br>· 不做推送 |
 | `notifier/` | `email.py`<br>`lark_bot.py`<br>`alert.py` | 将日报推送给目标：<br>· SMTP 邮件发送<br>· 飞书机器人消息推送<br>· **异常告警投递** | · 不做数据处理<br>· 不做日报生成<br>· 不做数据采集 |
 | `shared/` | `models.py`<br>`config.py`<br>`logger.py`<br>`errors.py`<br>`storage.py`<br>`calendar.py` | 跨模块共享能力：<br>· **数据模型定义**（跨模块共享的 Record / CollectResult / Report 类型）<br>· 配置读取和校验<br>· 统一日志格式<br>· 自定义异常 + 错误处理策略<br>· SQLite 存储（日报历史）<br>· **工作日/节假日判定** | — |
@@ -246,7 +260,7 @@ def collect(
 # 凭证取自 config.github.token（来源为环境变量 GITHUB_TOKEN，见 §6.2），
 # 该值不出现在签名中 —— 签名描述的是「采集什么」，凭证是运行环境而非调用参数。
 
-# collector/lark_task.py
+# collector/lark_task.py —— 本期未接入流水线，接口形态供 v1.1 使用（见 §1.3）
 def collect(
     project_id: str,           # 飞书任务清单 GUID
     since: datetime,           # 起始时间（tz-aware）

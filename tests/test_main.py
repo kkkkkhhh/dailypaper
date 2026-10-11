@@ -107,7 +107,6 @@ class Harness:
         self.collected: dict[str, tuple] = {}
         self.results: dict[str, CollectResult] = {
             "github": ok("github"),
-            "lark_task": ok("lark_task"),
             "lark_msg": ok("lark_msg"),
         }
         self.saved: list = []
@@ -124,7 +123,6 @@ class Harness:
 
         for source, module in (
             ("github", main.github),
-            ("lark_task", main.lark_task),
             ("lark_msg", main.lark_msg),
         ):
             monkeypatch.setattr(module, "collect", self._collector(source))
@@ -217,9 +215,10 @@ def test_collectors_receive_the_configured_scope(monkeypatch, config):
     main._run_pipeline(config, push=False, now=at(MONDAY))
 
     assert h.collected["github"][0][0] == ["owner/repo"]
-    assert h.collected["lark_task"][0][0] == ""
     assert h.collected["lark_msg"][0][0] == "oc_test"
     assert h.collected["lark_msg"][0][1] == ["项目"]
+    # 飞书任务源已移出本期 —— 编排层不应再调用它
+    assert "lark_task" not in h.collected
 
 
 def test_collection_window_starts_at_midnight(monkeypatch, config):
@@ -344,8 +343,8 @@ def test_successful_sources_are_not_marked(monkeypatch, config):
 
     report = h.saved[0]
     assert report.failed_sources == ["github"]
-    task_section = report.markdown.split("## 任务进展")[1].split("## 协作沟通")[0]
-    assert "数据获取失败" not in task_section
+    message_block = report.markdown.split("## 协作沟通", 1)[1]
+    assert "数据获取失败" not in message_block
 
 
 # --------------------------------------------------------------------------
@@ -355,7 +354,7 @@ def test_successful_sources_are_not_marked(monkeypatch, config):
 
 def test_all_sources_failing_aborts_without_empty_report(monkeypatch, config):
     h = Harness(monkeypatch, config)
-    for source in ("github", "lark_task", "lark_msg"):
+    for source in ("github", "lark_msg"):
         h.results[source] = failed(source, f"{source} 挂了")
 
     code = main._run_pipeline(config, push=True, now=at(MONDAY))
@@ -368,7 +367,7 @@ def test_all_sources_failing_aborts_without_empty_report(monkeypatch, config):
 
 def test_all_sources_failing_triggers_alert(monkeypatch, config):
     h = Harness(monkeypatch, config)
-    for source in ("github", "lark_task", "lark_msg"):
+    for source in ("github", "lark_msg"):
         h.results[source] = failed(source, f"{source} 挂了")
 
     main._run_pipeline(config, push=True, now=at(MONDAY))
@@ -376,8 +375,8 @@ def test_all_sources_failing_triggers_alert(monkeypatch, config):
     assert len(h.alerts) == 1
     subject, detail, channels = h.alerts[0]
     assert "所有数据源均不可用" in subject
-    # 三个源的错误摘要都要在告警里，否则排查时还得去翻日志
-    for source in ("github", "lark_task", "lark_msg"):
+    # 各源的错误摘要都要在告警里，否则排查时还得去翻日志
+    for source in ("github", "lark_msg"):
         assert source in detail
 
 
@@ -558,7 +557,7 @@ def test_log_records_start_counts_and_end(monkeypatch, config, caplog):
 
     messages = [r.getMessage() for r in caplog.records]
     assert any("执行开始" in m for m in messages)
-    assert messages.count("数据源采集完成") == 3
+    assert messages.count("数据源采集完成") == 2
     assert any("执行结束" in m for m in messages)
 
     counts = {
@@ -566,7 +565,7 @@ def test_log_records_start_counts_and_end(monkeypatch, config, caplog):
         for r in caplog.records
         if r.getMessage() == "数据源采集完成"
     }
-    assert counts == {"github": 1, "lark_task": 0, "lark_msg": 0}
+    assert counts == {"github": 1, "lark_msg": 0}
 
 
 def test_log_records_push_results(monkeypatch, config, caplog):
@@ -670,7 +669,7 @@ def test_check_reports_each_item_separately(monkeypatch, config, caplog):
         main._run_check(config)
 
     text = " ".join(r.getMessage() for r in caplog.records)
-    for name in ("GitHub API", "飞书任务接口", "飞书消息接口", "SMTP", "飞书机器人"):
+    for name in ("GitHub API", "飞书消息接口", "SMTP", "飞书机器人"):
         assert name in text
 
 

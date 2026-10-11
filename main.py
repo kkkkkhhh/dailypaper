@@ -18,7 +18,7 @@ from dataclasses import replace
 from datetime import datetime, time as dtime, timedelta
 from zoneinfo import ZoneInfo
 
-from collector import github, lark_msg, lark_task
+from collector import github, lark_msg
 from collector.lark_client import LarkClient
 from generator.aggregator import aggregate
 from generator.formatter import generate
@@ -40,6 +40,11 @@ EXIT_CONFIG_ERROR = 2
 #: --check 探测采集接口时用的窗口：够短，不会拉到有意义的量，
 #: 但足以让请求真的打到接口上，从而验证令牌与权限。
 _PROBE_WINDOW = timedelta(minutes=1)
+
+#: 飞书任务源已移出本期（proposal.md §2.2）：应用身份读不到用户的清单。
+#: 聚合接口的签名保持不变（design.md §1.3 保留了该 v1.1 接口），故传空结果 ——
+#: `TaskRecord` 与 `MemberReport.tasks` 的形态已定，v1.1 接入时不必重新设计。
+_OUT_OF_SCOPE_TASKS: CollectResult = CollectResult.ok("lark_task", [])
 
 
 # --------------------------------------------------------------------------
@@ -153,7 +158,7 @@ def _run_pipeline(config: Config, *, push: bool, now: datetime | None = None) ->
 
     members = _resolve_members(config)
     reports = aggregate(
-        results["github"], results["lark_task"], results["lark_msg"], members
+        results["github"], _OUT_OF_SCOPE_TASKS, results["lark_msg"], members
     )
 
     report = generate(
@@ -191,7 +196,6 @@ def _collect_all(
             token=config.github.token,
             timezone=config.schedule.timezone,
         ),
-        "lark_task": lark_task.collect(config.lark.project_id, since, until),
         "lark_msg": lark_msg.collect(
             config.lark.chat_id, config.filters.keywords, since, until
         ),
@@ -316,7 +320,6 @@ def _run_check(config: Config) -> int:
             f"仓库 {len(config.github.repos)} 个",
         ),
         ("GitHub API", *_probe_github(config, now)),
-        ("飞书任务接口", *_probe_lark_task(config, now)),
         ("飞书消息接口", *_probe_lark_msg(config, now)),
         ("SMTP", *email_notifier.check(config.smtp)),
         ("飞书机器人", *lark_bot.check(config)),
@@ -352,14 +355,6 @@ def _probe_github(config: Config, now: datetime) -> tuple[bool, str]:
     )
     if result.success:
         return True, f"令牌有效，{len(config.github.repos)} 个仓库均可访问"
-    return False, result.error or "未知错误"
-
-
-def _probe_lark_task(config: Config, now: datetime) -> tuple[bool, str]:
-    result = lark_task.collect(config.lark.project_id, now - _PROBE_WINDOW, now)
-    if result.success:
-        scope = config.lark.project_id or "全部可读清单"
-        return True, f"任务接口可用，采集范围：{scope}"
     return False, result.error or "未知错误"
 
 

@@ -43,6 +43,12 @@ collector/ ──▶ generator/ ──▶ notifier/          all ──▶ share
 
 违反「不负责」列比漏做功能更严重 —— 那意味着模块边界被侵蚀。
 
+> **本期数据源只有两个：GitHub 提交 + 飞书群消息。**
+> 飞书任务源（`collector/lark_task.py`）已实现、已测试，但**未接入流水线** ——
+> 应用身份读不到用户的清单，唯一路径 `user_access_token` 需要 OAuth 回调，
+> 与「不需要常驻后台服务」冲突。详见 proposal.md 变更记录与 design.md §1.3。
+> 相应地，日报**不设「任务进展」板块**。
+
 ## 关键契约（design.md §3、§4）
 
 - 全部数据模型定义在 **`shared/models.py`**，是唯一定义处。各模块**不得自行定义**这些类型。
@@ -94,7 +100,8 @@ collector/ ──▶ generator/ ──▶ notifier/          all ──▶ share
 - [x] Task 9 主编排入口（`main.py`）
 - [x] Task 10 集成测试
 
-**v1.0 全部任务完成**，363 个测试通过。尚未做真实凭证的端到端验证。
+**v1.0 全部任务完成**，369 个测试通过，真机 `--check` 5/5 通过。
+飞书任务源按需求变更移出本期（代码保留）。
 
 **注意**：告警由**编排层**触发，推送模块自己绝不触发 —— 否则 `email` 与 `lark_bot`
 会互相引用形成循环依赖（design.md §4.3）。`email.py` 已有一条 AST 测试从结构上

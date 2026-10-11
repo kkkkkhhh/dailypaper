@@ -76,6 +76,17 @@ def results(commits=(), tasks=(), messages=()):
     )
 
 
+def section(markdown: str, title: str) -> str:
+    """取出某个二级板块的正文（到下一个 `## ` 为止）。
+
+    抽成函数是为了板块增删时不必逐个改测试里的字符串切割 ——
+    本期就因为飞书任务移出而删掉过一个板块。
+    """
+    marker = f"## {title}"
+    assert marker in markdown, f"日报里没有「{title}」板块：\n{markdown}"
+    return markdown.split(marker, 1)[1].split("\n## ", 1)[0]
+
+
 # --------------------------------------------------------------------------
 # 聚合
 # --------------------------------------------------------------------------
@@ -159,15 +170,29 @@ def test_aggregate_records_failed_sources_are_still_not_consumed():
 # --------------------------------------------------------------------------
 
 
-def test_generate_contains_three_section_titles():
+def test_generate_contains_the_two_section_titles():
     commits, tasks, messages = results()
     report = generate(
         aggregate(commits, tasks, messages, MEMBERS), [], REPORT_DATE, "研发一组"
     )
 
     assert "## 代码提交" in report.markdown
-    assert "## 任务进展" in report.markdown
     assert "## 协作沟通" in report.markdown
+
+
+def test_task_section_is_absent_this_iteration():
+    """飞书任务源已移出本期（proposal.md 变更记录）。
+
+    即便聚合层拿到任务记录也不该冒出这个板块 —— 否则一个永远为空的板块
+    会在每天的日报上写「今日无记录」，而那句话与事实不符。
+    """
+    commits, tasks, messages = results(tasks=[task(ZHANG_LARK, "日报模板设计")])
+    report = generate(
+        aggregate(commits, tasks, messages, MEMBERS), [], REPORT_DATE, "研发一组"
+    )
+
+    assert "任务进展" not in report.markdown
+    assert "日报模板设计" not in report.markdown
 
 
 def test_generate_returns_all_seven_fields():
@@ -196,15 +221,6 @@ def test_generate_renders_commit_stats():
     assert "feat: 新增模板" in report.markdown
     assert "+10 行 / -2 行" in report.markdown
     assert "3 个文件" in report.markdown
-
-
-def test_generate_renders_task_transition():
-    commits, tasks, messages = results(tasks=[task(ZHANG_LARK, "日报模板设计")])
-    report = generate(
-        aggregate(commits, tasks, messages, MEMBERS), [], REPORT_DATE, "研发一组"
-    )
-
-    assert "日报模板设计：进行中 → 已完成" in report.markdown
 
 
 def test_generate_renders_message_with_time():
@@ -258,9 +274,9 @@ def test_failed_source_never_falls_back_to_no_records():
         aggregate(commits, tasks, messages, MEMBERS), ["github"], REPORT_DATE, "研发一组"
     )
 
-    section = report.markdown.split("## 代码提交")[1].split("## 任务进展")[0]
-    assert "数据获取失败" in section
-    assert "今日无记录" not in section
+    section_text = section(report.markdown, "代码提交")
+    assert "数据获取失败" in section_text
+    assert "今日无记录" not in section_text
 
 
 def test_partial_failure_still_shows_the_data_we_did_collect():
@@ -278,11 +294,11 @@ def test_partial_failure_still_shows_the_data_we_did_collect():
         failed_details={"github": ["owner/repoB"]},
     )
 
-    section = report.markdown.split("## 代码提交")[1].split("## 任务进展")[0]
-    assert "数据获取失败" in section
-    assert "owner/repoB" in section
-    assert "feat: 有数据" in section
-    assert "数据不完整" in section
+    section_text = section(report.markdown, "代码提交")
+    assert "数据获取失败" in section_text
+    assert "owner/repoB" in section_text
+    assert "feat: 有数据" in section_text
+    assert "数据不完整" in section_text
 
 
 def test_whole_source_failure_without_data_renders_notice_only():
@@ -292,21 +308,20 @@ def test_whole_source_failure_without_data_renders_notice_only():
         aggregate(commits, tasks, messages, MEMBERS), ["github"], REPORT_DATE, "研发一组"
     )
 
-    section = report.markdown.split("## 代码提交")[1].split("## 任务进展")[0]
-    assert "数据获取失败" in section
-    assert "张三" not in section
-    assert "今日无记录" not in section
+    section_text = section(report.markdown, "代码提交")
+    assert "数据获取失败" in section_text
+    assert "张三" not in section_text
+    assert "今日无记录" not in section_text
 
 
 def test_other_sections_unaffected_by_one_failure():
     """单一数据源失败不阻断其他源（proposal.md §3.2）。"""
-    commits, tasks, messages = results(tasks=[task(ZHANG_LARK)])
+    commits, tasks, messages = results(messages=[message(ZHANG_LARK, "项目讨论记录")])
     report = generate(
         aggregate(commits, tasks, messages, MEMBERS), ["github"], REPORT_DATE, "研发一组"
     )
 
-    task_section = report.markdown.split("## 任务进展")[1].split("## 协作沟通")[0]
-    assert "日报模板设计" in task_section
+    assert "项目讨论记录" in section(report.markdown, "协作沟通")
 
 
 def test_report_keeps_failed_sources():
@@ -364,20 +379,20 @@ def test_multiple_failed_sources_each_render_their_own_detail():
     commits, tasks, messages = results()
     report = generate(
         aggregate(commits, tasks, messages, MEMBERS),
-        ["github", "lark_task"],
+        ["github", "lark_msg"],
         REPORT_DATE,
         "研发一组",
-        failed_details={"github": ["owner/repoB"], "lark_task": ["项目清单 A"]},
+        failed_details={"github": ["owner/repoB"], "lark_msg": ["机器人不在群（230002）"]},
     )
 
-    github_section = report.markdown.split("## 代码提交")[1].split("## 任务进展")[0]
-    task_section = report.markdown.split("## 任务进展")[1].split("## 协作沟通")[0]
+    github_block = section(report.markdown, "代码提交")
+    message_block = section(report.markdown, "协作沟通")
 
-    assert "owner/repoB" in github_section
-    assert "项目清单 A" not in github_section
+    assert "owner/repoB" in github_block
+    assert "230002" not in github_block
 
-    assert "项目清单 A" in task_section
-    assert "owner/repoB" not in task_section
+    assert "230002" in message_block
+    assert "owner/repoB" not in message_block
 
 
 def test_whole_source_failure_uses_error_summary_as_detail():
@@ -635,9 +650,9 @@ def test_generate_handles_various_team_sizes(member_count):
 
     assert len(report.members) == member_count
 
-    # 只对代码提交板块断言「没有空的」—— 本用例没造任务和消息数据，
-    # 那两段显示「今日无记录」是正确行为，不是缺陷
-    commit_section = report.markdown.split("## 代码提交")[1].split("## 任务进展")[0]
-    assert "今日无记录" not in commit_section
+    # 只对代码提交板块断言「没有空的」—— 本用例没造消息数据，
+    # 协作沟通板块显示「今日无记录」是正确行为，不是缺陷
+    commit_block = section(report.markdown, "代码提交")
+    assert "今日无记录" not in commit_block
     for i in range(member_count):
-        assert f"### 成员{i}" in commit_section
+        assert f"### 成员{i}" in commit_block
