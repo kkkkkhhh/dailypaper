@@ -56,7 +56,7 @@
 
 | 模块 | 文件 | 负责 | **不负责** |
 |------|------|------|-----------|
-| `collector/` | `github.py`<br>`lark_task.py`<br>`lark_msg.py` | 从外部 API 获取原始数据：<br>· GitHub Commit 数据<br>· 飞书任务状态数据<br>· 飞书群消息数据 | · 不做数据格式化<br>· 不去重判断<br>· 不做推送<br>· **不做跨源聚合** |
+| `collector/` | `github.py`<br>`lark_client.py`<br>`lark_task.py`<br>`lark_msg.py` | 从外部 API 获取原始数据：<br>· GitHub Commit 数据<br>· **飞书 API 客户端**（令牌管理 + 身份反查，供两个飞书采集模块共用）<br>· 飞书任务状态数据<br>· 飞书群消息数据 | · 不做数据格式化<br>· 不去重判断<br>· 不做推送<br>· **不做跨源聚合** |
 | `generator/` | `aggregator.py`<br>`formatter.py`<br>`template.py` | 把原始数据组织为日报：<br>· **按成员映射聚合跨源记录**<br>· 数据整理<br>· Markdown 生成<br>· 日报模板管理 | · 不做数据采集<br>· 不调 API<br>· 不做推送 |
 | `notifier/` | `email.py`<br>`lark_bot.py`<br>`alert.py` | 将日报推送给目标：<br>· SMTP 邮件发送<br>· 飞书机器人消息推送<br>· **异常告警投递** | · 不做数据处理<br>· 不做日报生成<br>· 不做数据采集 |
 | `shared/` | `models.py`<br>`config.py`<br>`logger.py`<br>`errors.py`<br>`storage.py`<br>`calendar.py` | 跨模块共享能力：<br>· **数据模型定义**（跨模块共享的 Record / CollectResult / Report 类型）<br>· 配置读取和校验<br>· 统一日志格式<br>· 自定义异常 + 错误处理策略<br>· SQLite 存储（日报历史）<br>· **工作日/节假日判定** | — |
@@ -192,6 +192,19 @@ members:
 ### 4.1 采集层接口
 
 ```python
+# collector/lark_client.py —— 飞书开放平台客户端（两个飞书采集模块共用）
+class LarkClient:
+    def __init__(self, app_id: str, app_secret: str, timeout: float = 30.0): ...
+    def get(self, path: str, params: dict | None = None) -> dict: ...
+    # 自动携带 tenant_access_token；遇 Token 失效自动刷新后重试 1 次
+    def tenant_token(self) -> str: ...
+    def resolve_open_ids(self, emails: list[str]) -> dict[str, str]: ...
+    # 邮箱 → open_id 反查（§3.4 的 lark 邮箱写法依赖它）；
+    # 查询失败时返回已完成的部分，调用方对缺失项按未映射处理
+
+    @property
+    def token_refresh_count(self) -> int: ...  # 供测试断言「自动刷新 1 次」
+
 # collector/github.py
 def collect(
     repos: list[str],          # 仓库列表（owner/repo 形式）

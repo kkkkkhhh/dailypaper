@@ -3,7 +3,7 @@
 ## 元信息
 - 关联规范：`specs/proposal.md` v0.5、`specs/design.md` v0.5
 - 文档版本：v0.5
-- 任务总数：10
+- 任务总数：11（书中 10 个 + 新增 Task 2.5）
 - 预计总执行时间：3 到 4h（包含测试）
 - 执行策略：按依赖关系顺序执行，独立任务可并行执行
 - 依据：《SDD 实战：规范驱动开发之道》（黄佳著，人民邮电出版社）第 6 章
@@ -30,6 +30,7 @@
 | 14 | Task 9 | 新增 SQLite 写入验收 | design.md §4.4、ADR-002 |
 | 15 | 全文 | 新增时区约定 | design.md §6.5 |
 | 16 | Task 2 | 新增 `shared/models.py` 作为数据模型的唯一定义处（原规范定义了数据模型但未指定归属文件） | design.md §2、§3 |
+| 17 | Task 2.5 | 新增任务：飞书 API 客户端作为 Task 4/5 的共享前置。二者都需要令牌管理与邮箱反查，若各自实现会违反表 6-2「两个任务修改同一个文件不可以并行」，也会产生两份行为不一致的令牌逻辑 | design.md §2、§4.1 |
 
 ## 任务依赖图（DAG）
 
@@ -37,6 +38,8 @@
 Task 1 (项目初始化)
    ↓
 Task 2 (共享基础层)
+   ↓
+Task 2.5 (飞书 API 客户端)
    ↓
 ┌──────────┬──────────┬──────────┐
 │ Task 3   │ Task 4   │ Task 5   │   ← 三个采集模块可以并行执行
@@ -81,7 +84,7 @@ Task 10 (集成测试)
 
 **验收标准**
 - [ ] 目录结构符合 design.md §2 的模块划分，且文件清单与之一致：
-      `collector/`（github.py、lark_task.py、lark_msg.py）、
+      `collector/`（github.py、lark_client.py、lark_task.py、lark_msg.py）、
       `generator/`（aggregator.py、formatter.py、template.py）、
       `notifier/`（email.py、lark_bot.py、alert.py）、
       `shared/`（models.py、config.py、logger.py、errors.py、storage.py、calendar.py）、
@@ -121,6 +124,26 @@ Task 10 (集成测试)
 > **补充（对齐 design.md §6.6）**
 - [ ] `is_workday()` 测试覆盖：普通工作日、普通周末、法定假日落在工作日、调休补班日落在周末
 
+## Task 2.5: 实现飞书 API 客户端（共享前置）
+
+**描述**：封装飞书开放平台的令牌管理与身份反查，供 Task 4 与 Task 5 共用
+
+**输入**：design.md §4.1（采集层接口契约之 `LarkClient`）、design.md §3.4（身份映射）、design.md §6.1（错误处理）
+**输出**：`collector/lark_client.py` + `tests/test_lark_client.py`
+**依赖**：Task 2
+
+> **为什么单独成为一个任务**：Task 4 与 Task 5 都需要 tenant_access_token 获取、过期自动刷新、邮箱反查 open_id 这三件事。若各自实现一份，并行开发时必然出现两份行为不一致的令牌逻辑 —— 违反单一职责，也让「怎么用一份代码」变成两个任务都要碰同一个文件。按表 6-2 的并行规则，**两个任务修改同一个文件就不可以并行**，故先把它单独交付，Task 4/5 之后只读不写。
+
+**验收标准**
+- [ ] `LarkClient.__init__` 与 `get()`、`tenant_token()`、`resolve_open_ids()` 签名符合 design.md §4.1
+- [ ] 首次调用 `tenant_token()` 时向 `/open-apis/auth/v3/tenant_access_token/internal` 换取令牌
+- [ ] 令牌在有效期内被复用，不重复换取（断言 HTTP 调用次数）
+- [ ] 模拟 Token 失效（接口返回令牌无效错误码）时自动刷新并重试 **1 次**，`token_refresh_count` 加一
+- [ ] 刷新后仍失败则不无限重试，向上报告错误
+- [ ] `resolve_open_ids()` 用 `contact/v3/users/batch_get_id` 完成邮箱到 open_id 的映射
+- [ ] `resolve_open_ids()` 在部分邮箱查不到时返回已完成的部分，不抛异常
+- [ ] 使用 Mock 数据的单元测试全部通过，全程不打真实网络
+
 ## Task 3: 实现 GitHub 采集模块
 
 **描述**：调用 GitHub API 获取指定仓库在采集窗口内的 Commit 记录，返回 `CollectResult[CommitRecord]`
@@ -151,15 +174,15 @@ Task 10 (集成测试)
 
 **描述**：调用飞书开放平台 API 获取指定任务清单中在采集窗口内发生状态变更的任务，返回 `CollectResult[TaskRecord]`
 
-**输入**：design.md §3.1（TaskRecord 数据模型）、design.md §3.2（CollectResult 语义）、design.md §4.1（采集层接口契约）、design.md §6.5（时区约定）
+**输入**：design.md §3.1（TaskRecord 数据模型）、design.md §3.2（CollectResult 语义）、design.md §4.1（采集层接口契约：`LarkClient` 与 `lark_task.collect`）、design.md §6.5（时区约定）
 **输出**：`collector/lark_task.py` + `tests/test_lark_task.py`
-**依赖**：Task 2
+**依赖**：Task 2、Task 2.5
 
 **验收标准**
 - [ ] `collect()` 函数签名符合 design.md §4.1 的接口定义
 - [ ] 返回的每个 TaskRecord 包含全部 5 个字段且类型正确
 - [ ] `project_id` 为空字符串时不限定清单，采集全部任务
-- [ ] 飞书 Token 过期时自动刷新后重试 1 次
+- [ ] 复用 `LarkClient` 的令牌管理，**不自建令牌逻辑**
 - [ ] 超时重试 3 次，若仍失败则返回 `CollectResult(success=False)`
 - [ ] 使用 Mock 数据的单元测试全部通过
 
@@ -173,16 +196,16 @@ Task 10 (集成测试)
 
 **描述**：调用飞书开放平台 API 获取指定群的消息记录，按关键词过滤，返回 `CollectResult[MessageRecord]`
 
-**输入**：design.md §3.1（MessageRecord 数据模型）、design.md §3.2（CollectResult 语义）、design.md §4.1（采集层接口契约）、design.md §6.2（安全约束）
+**输入**：design.md §3.1（MessageRecord 数据模型）、design.md §3.2（CollectResult 语义）、design.md §4.1（采集层接口契约：`LarkClient` 与 `lark_msg.collect`）、design.md §6.2（安全约束）、design.md §6.5（时区约定）
 **输出**：`collector/lark_msg.py` + `tests/test_lark_msg.py`
-**依赖**：Task 2
+**依赖**：Task 2、Task 2.5
 
 **验收标准**
 - [ ] `collect()` 函数签名符合 design.md §4.1 的接口定义
 - [ ] 返回的每个 MessageRecord 包含全部 4 个字段且类型正确
 - [ ] 关键词过滤正确，只返回包含指定关键词的消息
 - [ ] 敏感关键词（薪资、绩效等）被正确过滤，不出现在结果中
-- [ ] 飞书 Token 过期时自动刷新后重试 1 次
+- [ ] 复用 `LarkClient` 的令牌管理，**不自建令牌逻辑**
 - [ ] 使用 Mock 数据的单元测试全部通过
 
 > **补充（对齐 design.md §3.2 / ADR-003 与 §6.2）**
@@ -312,6 +335,7 @@ Task 10 (集成测试)
 |------|------|------|
 | 阶段 1 | Task 1（项目初始化） | 串行 |
 | 阶段 2 | Task 2（共享基础层） | 串行 |
+| 阶段 2.5 | Task 2.5（飞书 API 客户端） | 串行 |
 | 阶段 3 | **Task 3 + Task 4 + Task 5**（三个采集模块） | **并行** |
 | 阶段 4 | Task 6（聚合 + 日报生成模块） | 串行 |
 | 阶段 5 | **Task 7 + Task 8**（两个推送模块） | **并行** |
