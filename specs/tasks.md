@@ -136,6 +136,7 @@ Task 10 (集成测试)
 - [ ] 使用 Mock 数据的单元测试全部通过
 
 > **补充（对齐 design.md §3.2 / ADR-003 / ADR-004）**
+- [ ] 返回值包含 `CollectResult` 的**全部 5 个字段**，且 `source == "github"`
 - [ ] 全部成功且有数据时：`success=True`、`records` 非空、`failed=[]`、`error=None`
 - [ ] 全部成功但无数据时：`success=True`、`records=[]`、`failed=[]` —— **区别于失败**
 - [ ] 多仓库部分失败（如 2 个仓库中 1 个 404）：`success=False`、`records` **保留成功仓库的记录**、`failed` 含失败仓库名
@@ -160,7 +161,8 @@ Task 10 (集成测试)
 - [ ] 使用 Mock 数据的单元测试全部通过
 
 > **补充（对齐 design.md §3.2 / ADR-003）**
-- [ ] 成功/失败分支与 Task 3 一致（含 `success` / `records` / `failed` / `error` 四个字段的取值）
+- [ ] 返回值包含 `CollectResult` 的**全部 5 个字段**，且 `source == "lark_task"`
+- [ ] 成功/失败分支与 Task 3 一致（含 `source` / `success` / `records` / `failed` / `error` 五个字段的取值）
 - [ ] **不抛出**异常给调用方
 - [ ] 飞书返回的**毫秒级时间戳**正确归一化为 tz-aware datetime（design.md §6.5）
 
@@ -181,6 +183,7 @@ Task 10 (集成测试)
 - [ ] 使用 Mock 数据的单元测试全部通过
 
 > **补充（对齐 design.md §3.2 / ADR-003 与 §6.2）**
+- [ ] 返回值包含 `CollectResult` 的**全部 5 个字段**，且 `source == "lark_msg"`
 - [ ] 成功/失败分支与 Task 3 一致；**不抛出**异常给调用方
 - [ ] 敏感词过滤在**采集阶段**执行（design.md §6.2「2. 数据安全」）——命中敏感词的原始内容不进入返回值，也不写入日志
 - [ ] 机器人自身发送的消息被排除（避免上一日推送的日报被当作讨论记录回采；机器人 open_id 见 `.env` 的 `FEISHU_BOT_OPEN_ID`）
