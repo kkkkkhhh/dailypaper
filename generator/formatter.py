@@ -31,22 +31,27 @@ def generate(
     date: date,
     team_name: str,
     now: datetime | None = None,
+    failed_details: dict[str, list[str]] | None = None,
 ) -> DailyReport:
     """生成日报。
 
     Args:
         members: 各成员数据（已聚合）。
-        failed_sources: 采集失败的数据源标识。**没有它就无法区分
-            「今日无记录」与「数据获取失败」** —— 这两者会产出完全相同的
-            成员数据，只看 members 是分辨不出来的。
+        failed_sources: 采集失败的数据源标识，决定**哪些板块**显示失败标注。
+            **没有它就无法区分「今日无记录」与「数据获取失败」** —— 这两者
+            会产出完全相同的成员数据，只看 members 是分辨不出来的。
         date: 日报日期。
         team_name: 团队名称。
         now: 生成时刻，仅测试用于固定时间。生产代码不应传。
+        failed_details: 数据源 → 失败子项明细（如 ``{"github": ["owner/repoB"]}``），
+            渲染成标注括号里的内容。整源失败时值为该源的错误摘要。
 
     Returns:
         DailyReport，``markdown`` 与 ``html`` 由同一上下文分别渲染。
     """
-    context = build_context(members, failed_sources, date, team_name, now)
+    context = build_context(
+        members, failed_sources, date, team_name, now, failed_details
+    )
 
     markdown = render_markdown(context)
     html = render_html(context)
@@ -68,6 +73,7 @@ def generate(
         team_name=team_name,
         members=members,
         failed_sources=list(failed_sources),
+        failed_details={k: list(v) for k, v in (failed_details or {}).items()},
         generated_at=context["generated_at_dt"],
         markdown=markdown,
         html=html,
@@ -80,10 +86,12 @@ def build_context(
     report_date: date,
     team_name: str,
     now: datetime | None = None,
+    failed_details: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """构造模板上下文。与模板的接口契约见 template.py。"""
     generated_at = now or datetime.now().astimezone()
     failed = set(failed_sources)
+    details = failed_details or {}
 
     sections: list[dict[str, Any]] = []
     for title, source, attribute, label in _SECTIONS:
@@ -93,7 +101,7 @@ def build_context(
                 "kind": attribute,
                 "source_label": label,
                 "failed": source in failed,
-                "failed_detail": "",
+                "failed_detail": "、".join(details.get(source, [])),
                 "members": [
                     {"name": member.name, "records": list(getattr(member, attribute))}
                     for member in members

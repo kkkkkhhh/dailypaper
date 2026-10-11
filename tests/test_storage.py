@@ -71,6 +71,7 @@ def make_report() -> DailyReport:
             MemberReport(name="李四", github_username="lisi-dev"),
         ],
         failed_sources=["lark_task"],
+        failed_details={"lark_task": ["项目清单 A", "项目清单 B"]},
         generated_at=TS,
         markdown="# 日报\n\n## 代码提交\n\n- feat: 新增日报模板",
         html="<h1>日报</h1><h2>代码提交</h2>",
@@ -105,6 +106,7 @@ def test_roundtrip_preserves_every_field(tmp_path):
     assert loaded.date == original.date
     assert loaded.team_name == original.team_name
     assert loaded.failed_sources == ["lark_task"]
+    assert loaded.failed_details == {"lark_task": ["项目清单 A", "项目清单 B"]}
     assert loaded.generated_at == original.generated_at
     assert loaded.markdown == original.markdown
     assert loaded.html == original.html

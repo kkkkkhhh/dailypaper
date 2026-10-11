@@ -73,12 +73,13 @@ def test_member_report_has_five_fields_in_order():
     ]
 
 
-def test_daily_report_has_seven_fields_in_order():
+def test_daily_report_has_eight_fields_in_order():
     assert field_names(DailyReport) == [
         "date",
         "team_name",
         "members",
         "failed_sources",
+        "failed_details",
         "generated_at",
         "markdown",
         "html",
@@ -158,9 +159,11 @@ def test_daily_report_construction():
         team_name="研发一组",
         members=[],
         failed_sources=["lark_task"],
+        failed_details={"lark_task": ["项目清单 A"]},
         generated_at=TS,
         markdown="# 日报",
         html="<h1>日报</h1>",
     )
     assert report.failed_sources == ["lark_task"]
+    assert report.failed_details["lark_task"] == ["项目清单 A"]
     assert report.generated_at.tzinfo is not None

@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS daily_reports (
     team_name      TEXT NOT NULL,
     generated_at   TEXT NOT NULL,
     failed_sources TEXT NOT NULL,
+    failed_details TEXT NOT NULL,
     members        TEXT NOT NULL,
     markdown       TEXT NOT NULL,
     html           TEXT NOT NULL
@@ -154,12 +155,14 @@ def save_report(report: DailyReport) -> None:
     conn.execute(
         """
         INSERT INTO daily_reports
-            (date, team_name, generated_at, failed_sources, members, markdown, html)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            (date, team_name, generated_at, failed_sources, failed_details,
+             members, markdown, html)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(date) DO UPDATE SET
             team_name      = excluded.team_name,
             generated_at   = excluded.generated_at,
             failed_sources = excluded.failed_sources,
+            failed_details = excluded.failed_details,
             members        = excluded.members,
             markdown       = excluded.markdown,
             html           = excluded.html
@@ -169,6 +172,7 @@ def save_report(report: DailyReport) -> None:
             report.team_name,
             report.generated_at.isoformat(),
             json.dumps(report.failed_sources, ensure_ascii=False),
+            json.dumps(report.failed_details, ensure_ascii=False),
             json.dumps(
                 [_member_to_dict(m) for m in report.members],
                 ensure_ascii=False,
@@ -198,6 +202,7 @@ def get_report(report_date: date) -> DailyReport | None:
             _member_from_dict(m) for m in json.loads(row["members"])
         ],
         failed_sources=json.loads(row["failed_sources"]),
+        failed_details=json.loads(row["failed_details"]),
         generated_at=datetime.fromisoformat(row["generated_at"]),
         markdown=row["markdown"],
         html=row["html"],

@@ -248,6 +248,8 @@ def test_happy_path_returns_complete_collect_result(msg_env, fake):
     assert len(result.records) == 2
     first = result.records[0]
     assert isinstance(first, MessageRecord)
+    # sender 必须是 API 原样返回的 open_id（聚合层按 member.lark_identifier 匹配），
+    # 不是显示名 —— 填显示名会让飞书消息源整批失配、被静默丢弃
     assert isinstance(first.sender, str) and first.sender == SENDER_ALICE
     assert isinstance(first.content, str) and first.content == "项目 A 的进度更新"
     assert isinstance(first.timestamp, datetime) and first.timestamp.tzinfo is not None
@@ -308,6 +310,7 @@ def test_sensitive_message_is_dropped_and_never_logged(msg_env, fake, caplog):
 
     # 不进日志：消息正文、结构化字段、异常文本一律不得出现敏感内容
     blob = log_blob(caplog)
+    assert "飞书群消息采集完成" in blob  # 防「日志根本没捕获到」的空壳断言
     assert "薪资" not in blob
     assert "绩效" not in blob
     assert "裁员" not in blob
@@ -412,9 +415,8 @@ def test_millisecond_timestamp_normalized_to_window_timezone(msg_env, fake):
     assert ts.microsecond == 411000  # 毫秒位不丢精度
 
 
-def test_timestamp_timezone_follows_window_not_config(msg_env, fake, monkeypatch):
+def test_timestamp_timezone_follows_window_not_config(msg_env, fake):
     """归一化时区取自 since.tzinfo —— 窗口给 UTC 就回 UTC，不反向读 config。"""
-    monkeypatch.delenv("FEISHU_BOT_OPEN_ID")
     fake.page_payloads = [page([text_message("项目进度", when=datetime(2026, 10, 11, 1, 30, tzinfo=timezone.utc))])]
 
     result = run_collect(

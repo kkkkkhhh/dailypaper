@@ -115,12 +115,13 @@ class MemberReport:
 
 @dataclass
 class DailyReport:
-    """每日报告（design.md §3.3，共 7 个字段）。"""
+    """每日报告（design.md §3.3，共 8 个字段）。"""
 
     date: date  # 日报日期
     team_name: str  # 团队名称
     members: list[MemberReport]  # 各成员的日报段落
-    failed_sources: list[str]  # 本次采集失败的数据源标识
+    failed_sources: list[str]  # 采集失败的数据源标识；决定哪些板块显示失败标注
+    failed_details: dict[str, list[str]]  # 数据源 → 失败子项明细；整源失败时值为 error 摘要
     generated_at: datetime  # 生成时间（tz-aware）
     markdown: str  # 完整的 Markdown 格式日报
     html: str  # 完整的 HTML 格式日报

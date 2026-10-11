@@ -285,6 +285,106 @@ def test_report_keeps_failed_sources():
 
 
 # --------------------------------------------------------------------------
+# 失败子项明细（design.md §3.2 的 failed_details 承载）
+# --------------------------------------------------------------------------
+
+
+def test_failed_details_rendered_in_both_formats():
+    """部分失败时必须显示**哪个子项**失败了，Markdown 与 HTML 都要有。
+
+    只显示「GitHub 数据获取失败」而不说哪个仓库，读者还是不知道该找谁。
+    """
+    commits, tasks, messages = results(commits=[commit("zhangsan")])
+    report = generate(
+        aggregate(commits, tasks, messages, MEMBERS),
+        ["github"],
+        REPORT_DATE,
+        "研发一组",
+        failed_details={"github": ["owner/repoB"]},
+    )
+
+    for produced in (report.markdown, report.html):
+        assert "GitHub 数据获取失败" in produced
+        assert "owner/repoB" in produced
+
+
+def test_failed_details_stored_on_report_object():
+    """明细要落在报告对象上 —— 否则 Task 10 只能靠字符串匹配，模板一改就误报。"""
+    commits, tasks, messages = results()
+    report = generate(
+        aggregate(commits, tasks, messages, MEMBERS),
+        ["github"],
+        REPORT_DATE,
+        "研发一组",
+        failed_details={"github": ["owner/repoB", "owner/repoC"]},
+    )
+
+    assert report.failed_details == {"github": ["owner/repoB", "owner/repoC"]}
+
+
+def test_multiple_failed_sources_each_render_their_own_detail():
+    commits, tasks, messages = results()
+    report = generate(
+        aggregate(commits, tasks, messages, MEMBERS),
+        ["github", "lark_task"],
+        REPORT_DATE,
+        "研发一组",
+        failed_details={"github": ["owner/repoB"], "lark_task": ["项目清单 A"]},
+    )
+
+    github_section = report.markdown.split("## 代码提交")[1].split("## 任务进展")[0]
+    task_section = report.markdown.split("## 任务进展")[1].split("## 协作沟通")[0]
+
+    assert "owner/repoB" in github_section
+    assert "项目清单 A" not in github_section
+
+    assert "项目清单 A" in task_section
+    assert "owner/repoB" not in task_section
+
+
+def test_whole_source_failure_uses_error_summary_as_detail():
+    """整源失败（failed 为空）时，明细位置放错误摘要。"""
+    commits, tasks, messages = results()
+    report = generate(
+        aggregate(commits, tasks, messages, MEMBERS),
+        ["lark_msg"],
+        REPORT_DATE,
+        "研发一组",
+        failed_details={"lark_msg": ["机器人不在群中（230002）"]},
+    )
+
+    assert "230002" in report.markdown
+    assert "230002" in report.html
+
+
+def test_failed_details_defaults_to_empty():
+    """不传 failed_details 时行为与之前一致，只是括号内容为空。"""
+    commits, tasks, messages = results()
+    report = generate(
+        aggregate(commits, tasks, messages, MEMBERS), ["github"], REPORT_DATE, "研发一组"
+    )
+
+    assert report.failed_details == {}
+    assert "GitHub 数据获取失败" in report.markdown
+    assert "（）" not in report.markdown  # 明细为空时不留下空括号
+
+
+def test_details_for_non_failed_source_are_ignored():
+    """failed_details 里有、但 failed_sources 里没有的源，不该冒出来。"""
+    commits, tasks, messages = results()
+    report = generate(
+        aggregate(commits, tasks, messages, MEMBERS),
+        [],
+        REPORT_DATE,
+        "研发一组",
+        failed_details={"github": ["owner/repoB"]},
+    )
+
+    assert "owner/repoB" not in report.markdown
+    assert "数据获取失败" not in report.markdown
+
+
+# --------------------------------------------------------------------------
 # 安全（design.md §6.2）
 # --------------------------------------------------------------------------
 
